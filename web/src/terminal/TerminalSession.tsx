@@ -3,7 +3,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
-import { post, type Server } from '../api';
+import { post, type ConnectChoice, type Server } from '../api';
 import { Field, Form, Modal } from '../ui';
 
 type Prompt =
@@ -30,6 +30,8 @@ const EXTRA_KEYS: { label: string; seq?: string; mod?: 'ctrl' | 'alt' }[] = [
 
 export function TerminalSession(props: {
   server: Server;
+  /** Credentials for this session, including a one-off key that is never saved. */
+  choice?: ConnectChoice;
   active: boolean;
   attempt: number;
   onState: (s: TerminalState) => void;
@@ -107,7 +109,7 @@ export function TerminalSession(props: {
     (async () => {
       let ticket: string;
       try {
-        ticket = (await post<{ ticket: string }>(`/api/servers/${props.server.id}/connect`)).ticket;
+        ticket = (await post<{ ticket: string }>(`/api/servers/${props.server.id}/connect`, props.choice ?? {})).ticket;
       } catch (e) {
         t.writeln(`\x1b[31m${e instanceof Error ? e.message : String(e)}\x1b[0m`);
         props.onState('closed');

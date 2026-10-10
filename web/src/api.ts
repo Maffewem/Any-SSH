@@ -13,6 +13,8 @@ export interface User {
 }
 
 export type Access = 'owner' | 'manage' | 'use';
+/** Whose credentials a share connects with. */
+export type ShareCredentials = 'owner' | 'own';
 export type AuthMethod = 'key' | 'password' | 'prompt';
 
 export interface Server {
@@ -27,8 +29,22 @@ export interface Server {
   hostKeyFingerprint: string | null;
   notes: string;
   access: Access;
+  credentials: ShareCredentials;
+  canShare: boolean;
   owner: { id: string; username: string; displayName: string } | null;
   shareCount: number;
+}
+
+/** What the browser connects with. A one-off key is held in memory and never sent anywhere but the connect call. */
+export type ConnectCredential =
+  | { type: 'saved' }
+  | { type: 'key'; keyId: string }
+  | { type: 'oneoff'; privateKey: string; passphrase?: string }
+  | { type: 'password' };
+
+export interface ConnectChoice {
+  credential: ConnectCredential;
+  username?: string;
 }
 
 export interface SshKey {
@@ -46,6 +62,9 @@ export interface Share {
   username: string;
   displayName: string;
   permission: 'use' | 'manage';
+  credentials: ShareCredentials;
+  canReshare: boolean;
+  sharedBy: string | null;
 }
 
 export interface AuditEntry {
@@ -108,6 +127,16 @@ export const del = <T>(path: string) => api<T>('DELETE', path);
 
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** Hands the browser a file without it ever touching disk on the server side of the UI. */
+export function downloadText(filename: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/octet-stream' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export function formatTime(ts: number | null | undefined): string {

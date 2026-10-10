@@ -3,11 +3,25 @@ import type { ServerAccess } from '../types.js';
 
 const TICKET_TTL_MS = 30_000;
 
+/**
+ * Which credentials a connection uses. `saved` is whatever the owner stored on the server;
+ * the rest are the connecting user's own. A one-off key exists only in this object, in memory:
+ * it is never written to the database and is dropped when the ticket is redeemed or expires.
+ */
+export type ConnectCredential =
+  | { type: 'saved' }
+  | { type: 'key'; keyId: string }
+  | { type: 'oneoff'; privateKey: string; passphrase?: string; fingerprint: string }
+  | { type: 'password' };
+
 export interface TerminalTicket {
   userId: string;
   serverId: string;
   sessionIdHash: string;
   access: ServerAccess;
+  credential: ConnectCredential;
+  /** SSH login name for this connection: the server's, unless the user brought their own credentials. */
+  username: string;
 }
 
 interface LiveTerminal {

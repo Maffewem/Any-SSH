@@ -7,16 +7,19 @@ import { createUser, makeApp, setupAdmin, type Client } from './helpers.js';
 
 const { Server, utils } = ssh2;
 
-/** A tiny SSH server that accepts one public key and echoes the shell back, upper-cased. */
-function startFakeSshd(allowedPublicKey: string, hostKey: string): Promise<{ port: number; close(): void }> {
-  const allowed = utils.parseKey(allowedPublicKey);
-  if (allowed instanceof Error || Array.isArray(allowed)) throw new Error('bad key');
+/** A tiny SSH server that accepts the given public keys and echoes the shell back, upper-cased. */
+function startFakeSshd(allowedPublicKeys: string[], hostKey: string): Promise<{ port: number; close(): void }> {
+  const allowed = allowedPublicKeys.map((k) => {
+    const parsed = utils.parseKey(k);
+    if (parsed instanceof Error || Array.isArray(parsed)) throw new Error('bad key');
+    return parsed;
+  });
   const server = new Server({ hostKeys: [hostKey] }, (client) => {
     client.on('authentication', (ctx) => {
-      if (ctx.method === 'publickey' && ctx.key.algo === allowed.type && ctx.key.data.equals(allowed.getPublicSSH())) {
+      const match = ctx.method === 'publickey' && allowed.find((k) => ctx.key.algo === k.type && ctx.key.data.equals(k.getPublicSSH()));
+      if (match) {
         if (!ctx.signature) return ctx.accept();
-        const ok = allowed.verify(ctx.blob!, ctx.signature, ctx.hashAlgo);
-        return ok ? ctx.accept() : ctx.reject();
+        return match.verify(ctx.blob!, ctx.signature, ctx.hashAlgo) ? ctx.accept() : ctx.reject();
       }
       ctx.reject(['publickey']);
     });
@@ -46,6 +49,8 @@ let owner: Client;
 let sharee: Client;
 let serverId: string;
 let sshd: { port: number; close(): void };
+/** A key the fake sshd accepts but Any-SSH has never stored. */
+let oneOffKey: string;
 
 beforeAll(async () => {
   built = await makeApp({ allowLoopbackTargets: true });
@@ -60,7 +65,9 @@ beforeAll(async () => {
   sharee = s.client;
 
   const key = (await owner.post('/api/keys/generate', { name: 'k' })).body.key;
-  sshd = await startFakeSshd(key.publicKey, utils.generateKeyPairSync('ed25519').private);
+  const oneOff = utils.generateKeyPairSync('ed25519');
+  oneOffKey = oneOff.private;
+  sshd = await startFakeSshd([key.publicKey, oneOff.public], utils.generateKeyPairSync('ed25519').private);
   serverId = (
     await owner.post('/api/servers', { name: 'box', host: '127.0.0.1', port: sshd.port, username: 'me', authMethod: 'key', keyId: key.id })
   ).body.server.id;
@@ -74,8 +81,8 @@ afterAll(async () => {
 
 type Msg = { type: string; [k: string]: unknown };
 
-async function openTerminal(client: Client, opts: { origin?: string } = {}) {
-  const { ticket } = (await client.post(`/api/servers/${serverId}/connect`)).body;
+async function openTerminal(client: Client, opts: { origin?: string; connect?: Record<string, unknown> } = {}) {
+  const { ticket } = (await client.post(`/api/servers/${serverId}/connect`, opts.connect ?? {})).body;
   const ws = new WebSocket(`${origin.replace('http', 'ws')}/api/terminal?ticket=${ticket}&cols=80&rows=24`, {
     headers: { origin: opts.origin ?? origin, cookie: client.cookie },
   });
@@ -137,6 +144,46 @@ describe('terminal over WebSocket', () => {
     const exit = await t.next((m) => m.type === 'exit');
     expect(String(exit.reason)).toMatch(/access/);
     await owner.put(`/api/servers/${serverId}/shares/${shareeId}`, { permission: 'use' });
+  });
+
+  it('connects with a one-off key that is never stored, and refuses one the server does not know', async () => {
+    const accepted = utils.generateKeyPairSync('ed25519');
+    const keys = () => (built.ctx.db.prepare('SELECT COUNT(*) AS n FROM ssh_keys').get() as { n: number }).n;
+    const before = keys();
+
+    // A key the fake sshd does not accept fails authentication rather than being quietly ignored.
+    const stranger = await openTerminal(sharee, { connect: { credential: { type: 'oneoff', privateKey: accepted.private } } });
+    expect((await stranger.next((m) => m.type === 'error')).code).toBe('ssh_error');
+    stranger.ws.close();
+    expect(keys()).toBe(before);
+
+    // The key the sshd does accept gets a shell, and still leaves nothing behind.
+    const t = await openTerminal(sharee, { connect: { credential: { type: 'oneoff', privateKey: oneOffKey } } });
+    await t.next((m) => m.type === 'ready');
+    t.send({ type: 'input', data: 'oneoff' });
+    await t.next((m) => m.type === 'data' && String(m.data).includes('ONEOFF'));
+    t.ws.close();
+    expect(keys()).toBe(before);
+    const stored = JSON.stringify(built.ctx.db.prepare('SELECT * FROM audit_log').all());
+    expect(stored).not.toContain('PRIVATE KEY');
+    expect(stored).toContain('one_off_key');
+  });
+
+  it('stops a sharee using the owner’s credentials once the owner requires their own', async () => {
+    const shareeId = (await sharee.get('/api/auth/me')).body.user.id;
+    const live = await openTerminal(sharee);
+    await live.next((m) => m.type === 'ready');
+
+    await owner.put(`/api/servers/${serverId}/shares/${shareeId}`, { permission: 'use', credentials: 'own' });
+    expect(String((await live.next((m) => m.type === 'exit')).reason)).toMatch(/own credentials/i);
+    expect((await sharee.post(`/api/servers/${serverId}/connect`)).body.code).toBe('own_credentials_required');
+
+    // A one-off key of their own still works.
+    const t = await openTerminal(sharee, { connect: { credential: { type: 'oneoff', privateKey: oneOffKey } } });
+    await t.next((m) => m.type === 'ready');
+    t.ws.close();
+
+    await owner.put(`/api/servers/${serverId}/shares/${shareeId}`, { permission: 'use', credentials: 'owner' });
   });
 
   it('refuses a changed host key', async () => {

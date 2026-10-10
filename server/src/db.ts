@@ -126,6 +126,13 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX auth_tokens_user ON auth_tokens(user_id);
   `,
+  `
+  -- 'owner': the grantee connects with the owner's saved key or password.
+  -- 'own': the grantee must bring their own credentials; the owner's are never used for them.
+  ALTER TABLE server_shares ADD COLUMN credentials TEXT NOT NULL DEFAULT 'owner' CHECK (credentials IN ('owner', 'own'));
+  -- Whether a 'manage' grantee may share the server onwards. Off unless the owner turns it on.
+  ALTER TABLE server_shares ADD COLUMN can_reshare INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openDatabase(file: string): DB {

@@ -9,6 +9,7 @@ import { keyContext, type StoredPrivateKey } from '../routes/keys.js';
 import { getServerAccess, serverPasswordContext } from '../routes/servers.js';
 import type { AppContext, ServerRow, SshKeyRow } from '../types.js';
 import { sshFingerprint } from './fingerprint.js';
+import type { ConnectCredential } from './registry.js';
 import { resolveTarget } from './target.js';
 
 const { Client, utils } = ssh2;
@@ -61,6 +62,11 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
   const found = getServerAccess(ctx, user.id, ticket.serverId);
   if (!found) return fail('not_found', 'Server not found');
   const { server, access } = found;
+  // Re-checked here: the owner may have withdrawn use of their credentials since the ticket was issued.
+  if (ticket.credential.type === 'saved' && found.credentials === 'own') {
+    return fail('own_credentials_required', 'The owner asked you to connect with your own credentials.');
+  }
+  const { credential, username } = ticket;
   const ip = clientIp(req);
   const auditBase = { actorId: user.id, actorUsername: user.username, targetType: 'server', targetId: server.id, ip };
 
@@ -129,13 +135,13 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
 
   // 3. Credentials. They are decrypted only here, in memory, for the duration of the handshake.
   let creds: Pick<ConnectConfig, 'privateKey' | 'passphrase' | 'password'>;
-  // Which key was used is recorded with the session, so every use of a stored key is attributable.
+  // Which key was used is recorded with the session, so every use of a key is attributable.
   let credentialFingerprint: string | null = null;
+  let usedKeyId: string | null = null;
   try {
-    creds = await loadCredentials(ctx, server, (prompt) => ask('password', prompt));
-    credentialFingerprint = server.auth_method === 'key'
-      ? ((db.prepare('SELECT fingerprint FROM ssh_keys WHERE id = ?').get(server.key_id) as { fingerprint: string } | undefined)?.fingerprint ?? null)
-      : null;
+    ({ creds, fingerprint: credentialFingerprint, keyId: usedKeyId } = await loadCredentials(ctx, server, user.id, credential, username, (prompt) =>
+      ask('password', prompt),
+    ));
   } catch (err) {
     return closeWithError(err);
   }
@@ -196,11 +202,14 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
   // 5. Connect and open an interactive shell.
   conn.on('ready', () => {
     connected = true;
-    if (server.auth_method === 'key') db.prepare('UPDATE ssh_keys SET last_used_at = ? WHERE id = ?').run(Date.now(), server.key_id);
+    if (usedKeyId) db.prepare('UPDATE ssh_keys SET last_used_at = ? WHERE id = ?').run(Date.now(), usedKeyId);
     audit.record({
       ...auditBase,
       action: 'ssh.session_start',
-      details: { host: server.host, port: server.port, username: server.username, access, authMethod: server.auth_method, keyFingerprint: credentialFingerprint },
+      details: {
+        host: server.host, port: server.port, username, access,
+        credentials: credentialSource(credential, server), keyFingerprint: credentialFingerprint,
+      },
     });
     send({ type: 'status', message: 'Connected' });
     conn.shell({ term: 'xterm-256color', cols, rows }, (err, stream) => {
@@ -240,7 +249,7 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
   conn.connect({
     host: address,
     port: server.port,
-    username: server.username,
+    username,
     readyTimeout: config.sshConnectTimeoutMs,
     keepaliveInterval: 15_000,
     keepaliveCountMax: 4,
@@ -255,26 +264,60 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
   }
 }
 
+type Creds = Pick<ConnectConfig, 'privateKey' | 'passphrase' | 'password'>;
+
+/** How the session authenticated, for the audit log. */
+function credentialSource(credential: ConnectCredential, server: ServerRow): string {
+  if (credential.type === 'saved') return server.auth_method === 'prompt' ? 'password_prompt' : `owner_${server.auth_method}`;
+  if (credential.type === 'key') return 'own_key';
+  if (credential.type === 'oneoff') return 'one_off_key';
+  return 'password_prompt';
+}
+
 async function loadCredentials(
   ctx: AppContext,
   server: ServerRow,
+  userId: string,
+  credential: ConnectCredential,
+  username: string,
   askPassword: (prompt: Record<string, unknown>) => Promise<{ password: string } | null>,
-): Promise<Pick<ConnectConfig, 'privateKey' | 'passphrase' | 'password'>> {
-  if (server.auth_method === 'key') {
-    const key = ctx.db.prepare('SELECT * FROM ssh_keys WHERE id = ? AND owner_id = ?').get(server.key_id, server.owner_id) as
-      | SshKeyRow
-      | undefined;
-    if (!key) throw new Error('The SSH key for this server no longer exists.');
+): Promise<{ creds: Creds; fingerprint: string | null; keyId: string | null }> {
+  const fromStoredKey = (keyId: string | null, ownerId: string) => {
+    const key = ctx.db.prepare('SELECT * FROM ssh_keys WHERE id = ? AND owner_id = ?').get(keyId, ownerId) as SshKeyRow | undefined;
+    if (!key) throw new Error('That SSH key no longer exists.');
     const stored = JSON.parse(ctx.box.openString(key.private_key_enc, keyContext(key.id))) as StoredPrivateKey;
-    return { privateKey: stored.privateKey, ...(stored.passphrase ? { passphrase: stored.passphrase } : {}) };
+    return {
+      creds: { privateKey: stored.privateKey, ...(stored.passphrase ? { passphrase: stored.passphrase } : {}) },
+      fingerprint: key.fingerprint,
+      keyId: key.id,
+    };
+  };
+  const prompt = async () => {
+    const reply = await askPassword({ type: 'password', username, host: server.host });
+    if (!reply) throw new Error('No password entered.');
+    return { creds: { password: reply.password }, fingerprint: null, keyId: null };
+  };
+
+  switch (credential.type) {
+    case 'key':
+      // The connecting user's own key, never anyone else's.
+      return fromStoredKey(credential.keyId, userId);
+    case 'oneoff':
+      return {
+        creds: { privateKey: credential.privateKey, ...(credential.passphrase ? { passphrase: credential.passphrase } : {}) },
+        fingerprint: credential.fingerprint,
+        keyId: null,
+      };
+    case 'password':
+      return prompt();
+    case 'saved':
+      if (server.auth_method === 'key') return fromStoredKey(server.key_id, server.owner_id);
+      if (server.auth_method === 'password') {
+        if (!server.password_enc) throw new Error('No password is stored for this server.');
+        return { creds: { password: ctx.box.openString(server.password_enc, serverPasswordContext(server.id)) }, fingerprint: null, keyId: null };
+      }
+      return prompt();
   }
-  if (server.auth_method === 'password') {
-    if (!server.password_enc) throw new Error('No password is stored for this server.');
-    return { password: ctx.box.openString(server.password_enc, serverPasswordContext(server.id)) };
-  }
-  const reply = await askPassword({ type: 'password', username: server.username, host: server.host });
-  if (!reply) throw new Error('No password entered.');
-  return { password: reply.password };
 }
 
 function friendlyError(message: string): string {

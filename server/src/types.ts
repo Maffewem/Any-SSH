@@ -68,6 +68,18 @@ export interface ServerRow {
 }
 
 export type SharePermission = 'use' | 'manage';
+/** Whose credentials a share connects with: the owner's saved ones, or the grantee's own. */
+export type ShareCredentials = 'owner' | 'own';
+
+export interface ServerShareRow {
+  server_id: string;
+  user_id: string;
+  permission: SharePermission;
+  credentials: ShareCredentials;
+  can_reshare: number;
+  created_by: string | null;
+  created_at: number;
+}
 /** How the current user relates to a server: owner, or a share grant. */
 export type ServerAccess = 'owner' | SharePermission;
 

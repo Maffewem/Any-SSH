@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { del, get, patch, post, put, type AuthMethod, type Server, type Share, type SshKey } from '../api';
+import { del, get, patch, post, put, type AuthMethod, type ConnectChoice, type ConnectCredential, type Server, type Share, type ShareCredentials, type SshKey } from '../api';
 import { Field, Form, Modal, useAsync } from '../ui';
 
-export function ServersPage({ onConnect }: { onConnect: (s: Server) => void }) {
+export function ServersPage({ onConnect }: { onConnect: (s: Server, choice?: ConnectChoice) => void }) {
   const { data, error, reload } = useAsync(() => get<{ servers: Server[] }>('/api/servers'), []);
   const [editing, setEditing] = useState<Server | 'new' | null>(null);
   const [sharing, setSharing] = useState<Server | null>(null);
+  const [connecting, setConnecting] = useState<Server | null>(null);
   const [filter, setFilter] = useState('');
 
   const servers = (data?.servers ?? []).filter((s) =>
@@ -43,19 +44,22 @@ export function ServersPage({ onConnect }: { onConnect: (s: Server) => void }) {
                   s.shareCount > 0 && <span className="badge">Shared with {s.shareCount}</span>
                 ) : (
                   <span className="badge accent">
-                    {s.access === 'manage' ? 'Manager' : 'Shared'} · from {s.owner?.displayName ?? 'unknown'}
+                        {s.access === 'manage' ? 'Manager' : 'Shared'} · from {s.owner?.displayName ?? 'unknown'}
                   </span>
                 )}
-                <span className="badge">{authLabel(s.authMethod)}</span>
+                <span className="badge">{s.credentials === 'own' ? 'Your own credentials' : authLabel(s.authMethod)}</span>
                 {!s.hostKeyFingerprint && <span className="badge warn">Host key not verified</span>}
               </div>
             </div>
             <div className="actions">
-              <button className="primary" onClick={() => onConnect(s)}>
+              <button className="primary" onClick={() => (s.credentials === 'own' ? setConnecting(s) : onConnect(s))}>
                 Connect
               </button>
+              <button title="Connect with different credentials" onClick={() => setConnecting(s)}>
+                Connect as…
+              </button>
               {s.access !== 'use' && <button onClick={() => setEditing(s)}>Edit</button>}
-              {s.access !== 'use' && <button onClick={() => setSharing(s)}>Share</button>}
+              {(s.access === 'owner' || s.canShare) && <button onClick={() => setSharing(s)}>Share</button>}
             </div>
           </article>
         ))}
@@ -68,6 +72,13 @@ export function ServersPage({ onConnect }: { onConnect: (s: Server) => void }) {
         />
       )}
       {sharing && <ShareDialog server={sharing} onClose={() => (setSharing(null), reload())} />}
+      {connecting && (
+        <ConnectDialog
+          server={connecting}
+          onClose={() => setConnecting(null)}
+          onConnect={(choice) => (setConnecting(null), onConnect(connecting, choice))}
+        />
+      )}
     </section>
   );
 }
@@ -195,6 +206,8 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
     [q],
   );
   const [error, setError] = useState<string | null>(null);
+  // A manager who was made to bring their own credentials cannot pass the owner's on.
+  const [newCredentials, setNewCredentials] = useState<ShareCredentials>(server.credentials === 'own' ? 'own' : 'owner');
   const isOwner = server.access === 'owner';
   const already = new Set(shares.data?.shares.map((s) => s.userId));
   const run = async (fn: () => Promise<unknown>) => {
@@ -206,41 +219,68 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  const update = (s: Share, change: Partial<Pick<Share, 'permission' | 'credentials' | 'canReshare'>>) =>
+    run(() =>
+      put(`/api/servers/${server.id}/shares/${s.userId}`, {
+        permission: change.permission ?? s.permission,
+        credentials: change.credentials ?? s.credentials,
+        canReshare: change.canReshare ?? s.canReshare,
+      }),
+    );
 
   return (
     <Modal title={`Share ${server.name}`} onClose={onClose}>
       <p className="muted small">
-        People you share with connect through Any-SSH using this server’s credentials. They never see the private key or
-        password. <strong>Use</strong> lets them connect; <strong>Manage</strong> also lets them rename it and share it for use.
+        <strong>Use</strong> lets someone connect; <strong>Manage</strong> also lets them rename it. Choose whether they
+        connect with this server’s saved credentials (they never see the key or password) or must supply their own.
       </p>
       {error && <p className="error">{error}</p>}
       <ul className="list">
         {shares.data?.shares.map((s) => (
-          <li key={s.userId}>
-            <span>
-              {s.displayName} <span className="muted">@{s.username}</span>
-            </span>
-            <span className="row">
-              <select
-                value={s.permission}
-                disabled={!isOwner}
-                onChange={(e) => run(() => put(`/api/servers/${server.id}/shares/${s.userId}`, { permission: e.target.value }))}
-              >
+          <li key={s.userId} className="share-row">
+            <div>
+              <span>
+                {s.displayName} <span className="muted">@{s.username}</span>
+              </span>
+              {s.sharedBy && s.sharedBy !== server.owner?.username && <span className="badge">shared by {s.sharedBy}</span>}
+            </div>
+            <div className="row wrap">
+              <select value={s.permission} disabled={!isOwner} onChange={(e) => update(s, { permission: e.target.value as Share['permission'] })}>
                 <option value="use">Use</option>
                 <option value="manage">Manage</option>
               </select>
+              <select
+                value={s.credentials}
+                disabled={!isOwner && server.credentials === 'own'}
+                onChange={(e) => update(s, { credentials: e.target.value as ShareCredentials })}
+              >
+                <option value="owner">Saved credentials</option>
+                <option value="own">Their own credentials</option>
+              </select>
+              {s.permission === 'manage' && (
+                <label className="check small">
+                  <input type="checkbox" checked={s.canReshare} disabled={!isOwner} onChange={(e) => update(s, { canReshare: e.target.checked })} />
+                  Can re-share
+                </label>
+              )}
               {(isOwner || s.permission === 'use') && (
                 <button className="ghost" onClick={() => run(() => del(`/api/servers/${server.id}/shares/${s.userId}`))}>
                   Remove
                 </button>
               )}
-            </span>
+            </div>
           </li>
         ))}
         {shares.data?.shares.length === 0 && <li className="muted">Not shared with anyone yet.</li>}
       </ul>
       <Field label="Add people">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or username" autoCapitalize="none" />
+      </Field>
+      <Field label="They connect with" hint={server.credentials === 'own' ? 'You use your own credentials here, so anyone you share with must too.' : undefined}>
+        <select value={newCredentials} disabled={server.credentials === 'own'} onChange={(e) => setNewCredentials(e.target.value as ShareCredentials)}>
+          <option value="owner">This server’s saved credentials</option>
+          <option value="own">Their own credentials</option>
+        </select>
       </Field>
       <ul className="list">
         {directory.data?.users
@@ -250,10 +290,89 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
               <span>
                 {u.displayName} <span className="muted">@{u.username}</span>
               </span>
-              <button onClick={() => run(() => put(`/api/servers/${server.id}/shares/${u.id}`, { permission: 'use' }))}>Share</button>
+              <button onClick={() => run(() => put(`/api/servers/${server.id}/shares/${u.id}`, { permission: 'use', credentials: newCredentials }))}>
+                Share
+              </button>
             </li>
           ))}
       </ul>
+    </Modal>
+  );
+}
+
+/** Picks the credentials for one connection. A one-off key stays in this component and in memory only. */
+function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose: () => void; onConnect: (c: ConnectChoice) => void }) {
+  const mustBringOwn = server.credentials === 'own';
+  const keys = useAsync(() => get<{ keys: SshKey[] }>('/api/keys'), []);
+  const [kind, setKind] = useState<ConnectCredential['type']>(mustBringOwn ? 'oneoff' : 'saved');
+  const [keyId, setKeyId] = useState('');
+  const [privateKey, setPrivateKey] = useState('');
+  const [passphrase, setPassphrase] = useState('');
+  const [username, setUsername] = useState(server.username);
+
+  const submit = async () => {
+    const credential: ConnectCredential =
+      kind === 'saved'
+        ? { type: 'saved' }
+        : kind === 'key'
+          ? { type: 'key', keyId }
+          : kind === 'oneoff'
+            ? { type: 'oneoff', privateKey, ...(passphrase ? { passphrase } : {}) }
+            : { type: 'password' };
+    onConnect({ credential, ...(kind === 'saved' ? {} : { username }) });
+    setPrivateKey('');
+    setPassphrase('');
+  };
+
+  return (
+    <Modal title={`Connect to ${server.name}`} onClose={onClose}>
+      {mustBringOwn && <p className="muted small">The owner asked you to connect with your own credentials.</p>}
+      <Form submit="Connect" onSubmit={submit}>
+        <Field label="Credentials">
+          <select value={kind} onChange={(e) => setKind(e.target.value as ConnectCredential['type'])}>
+            {!mustBringOwn && <option value="saved">This server’s saved credentials</option>}
+            <option value="key">One of my saved keys</option>
+            <option value="oneoff">A one-off key (not saved)</option>
+            <option value="password">Ask me for a password</option>
+          </select>
+        </Field>
+        {kind !== 'saved' && (
+          <Field label="SSH username">
+            <input value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" required />
+          </Field>
+        )}
+        {kind === 'key' && (
+          <Field label="Key" hint={keys.data?.keys.length === 0 ? 'You have no keys yet. Create one on the Keys page.' : undefined}>
+            <select value={keyId} onChange={(e) => setKeyId(e.target.value)} required>
+              <option value="">Choose a key…</option>
+              {keys.data?.keys.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.name} ({k.type})
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {kind === 'oneoff' && (
+          <>
+            <Field label="Private key" hint="Used for this connection only. It is never written to the database and is gone when the session ends.">
+              <textarea
+                className="mono"
+                value={privateKey}
+                onChange={(e) => setPrivateKey(e.target.value)}
+                rows={7}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                required
+              />
+            </Field>
+            <Field label="Passphrase (if the key has one)">
+              <input type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} autoComplete="off" />
+            </Field>
+          </>
+        )}
+      </Form>
     </Modal>
   );
 }

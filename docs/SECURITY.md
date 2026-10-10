@@ -52,11 +52,20 @@ wrappers can come later.
   so a compromised admin session cannot silently open a shell on every server.
 - **Servers** belong to an owner. The owner can share a server with any number of users:
   - `use`: can connect. Cannot see or change host, username or credentials.
-  - `manage`: can also rename it, edit notes, forget the pinned host key and share it with others for `use`.
+  - `manage`: can also rename it, edit notes and forget the pinned host key.
   - Only the owner can change connection details or credentials, grant `manage`, or delete. This stops a manager from
     re-pointing a server that stores a password at a machine they control and harvesting it.
-- **Credential use without disclosure.** People a server is shared with connect using the owner's key or stored password,
-  but the secret never leaves the Any-SSH server. They only ever see the server's name and address.
+- **Re-sharing is off by default.** A `manage` grant carries a separate "can re-share" flag that only the owner can set.
+  Without it, the share dialog is hidden and the API refuses the grant, so access cannot spread without the owner's say-so.
+  With it, a manager may still only grant `use`, never `manage`, and never more than they hold themselves.
+- **Whose credentials.** Each share records whether the person connects with the server's saved credentials or must
+  supply their own. Switching an existing share to "their own" closes their open terminals on that server at once, and
+  the choice is re-checked when the terminal socket opens, not just when the ticket is issued. A manager who must bring
+  their own credentials cannot hand the owner's to anyone else.
+- **Credential use without disclosure.** People sharing the owner's credentials connect using the owner's key or stored
+  password, but the secret never leaves the Any-SSH server. They only ever see the server's name and address.
+- **Own credentials** are a saved key belonging to the connecting user, a password typed at connect time, or a one-off
+  key (below). A user can only ever select one of their own stored keys.
 - **SSH keys** are private to their owner and can only be attached to the owner's own servers.
 - Anything you cannot access returns **404, not 403**, so IDs cannot be probed.
 - Revoking a share closes that person's open terminals on that server immediately.
@@ -70,9 +79,14 @@ another row fails to decrypt instead of handing one user's key to another. Ciphe
 rotation.
 
 - The database file is created `0600`, the data directory `0700`, and SQLite `secure_delete` is on.
-- Private keys are **never returned by the API**, not even to their owner. Generated keys can be used only through
-  Any-SSH; imported keys stay usable elsewhere since you already hold them. Imported keys protected by a passphrase are
-  stored with that passphrase (both sealed), so they can be used without prompting.
+- Private keys are returned by the API only through **`POST /api/keys/:id/export`**, to the key's owner, after
+  re-entering the account password (rate-limited to 5/min, audited, and an email notice is sent). Nothing else ever
+  returns key material: a key attached to a server is invisible to the people it is shared with.
+- **One-off keys.** A user may paste a private key at connect time instead of saving one. It is parsed and checked for
+  weak types, held in the connect ticket in memory, used for that SSH handshake and then dropped. It is never written to
+  the database and never appears in the audit log; only the fingerprint is recorded.
+- Imported keys protected by a passphrase are stored with that passphrase (both sealed), so they can be used without
+  prompting.
 - Decrypted secrets exist only in memory for the duration of an SSH handshake.
 
 - **Key rotation.** Generate a new key, start the server with `ANYSSH_MASTER_KEY=<new>` and
@@ -104,7 +118,8 @@ and reset links directly so they can pass them on.
    cross-site WebSocket hijacking.
 3. **Host key verification (no blind trust).** The SHA-256 fingerprint of the server's host key is pinned per saved
    server. On first connection the owner (or a manager) is shown the fingerprint and must explicitly trust it; people with
-   `use` access cannot trust on first use and are refused until the owner has. A changed key is **refused**, shown as a
+   `use` access cannot trust on first use and are refused until the owner has. The ticket also carries which credentials
+   the connection uses (saved, one of the user's own keys, a one-off key, or a password prompt) and the SSH login name. A changed key is **refused**, shown as a
    possible attack and audited. Changing a server's host or port clears the pin.
 4. **SSRF guard.** The hostname is resolved once and the vetted IP is what we dial (no DNS rebinding window). Loopback,
    link-local (including cloud metadata `169.254.169.254`), unspecified and multicast addresses are refused unless
@@ -126,7 +141,7 @@ and reset links directly so they can pass them on.
 ## Audit log
 
 Append-only table recording sign-ins (and failures with reason), MFA changes, password changes, admin actions, key
-creation/deletion, server changes, share grants/changes/revocations, host-key trust/mismatch, and SSH session start/end
+creation/deletion/export, server changes, share grants/changes/revocations, host-key trust/mismatch, and SSH session start/end
 (with duration and byte count). Each entry stores the actor's ID **and** username so history survives account deletion.
 
 - SQLite triggers reject `UPDATE`/`DELETE` on the table.
