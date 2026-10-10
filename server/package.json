@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "gen-key": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
-    "rotate-keys": "node dist/cli/rotate-keys.js"
+    "rotate-keys": "node dist/cli/rotate-keys.js",
+    "backup": "node dist/cli/backup.js"
   },
   "license": "UNLICENSED",
   "dependencies": {

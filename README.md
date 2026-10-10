@@ -17,7 +17,8 @@ Install it as an app from Safari ("Add to Home Screen") or Chrome.
 - **Terminal:** xterm.js over a WebSocket, multiple tabs, and an extra-keys bar (Esc, Tab, Ctrl, Alt, arrows) on touch
   devices.
 
-Security design, threat model and known gaps: [docs/SECURITY.md](docs/SECURITY.md).
+Security design, threat model and known gaps: [docs/SECURITY.md](docs/SECURITY.md). Deployment and scaling:
+[docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Quick start (development)
 
@@ -43,6 +44,19 @@ To try it against an SSH server on the same machine, also set `ANYSSH_ALLOW_LOOP
 the SSRF notes in the security doc).
 
 ## Production
+
+The recommended setup is Docker Compose with Caddy for automatic HTTPS:
+
+```bash
+mkdir -p secrets && openssl rand -base64 32 > secrets/master_key
+sudo chown 1000:1000 secrets/master_key && chmod 600 secrets/master_key
+cp .env.example .env              # set ANYSSH_DOMAIN, ANYSSH_ORIGIN, SMTP
+docker compose up -d --build
+```
+
+Hosting choices, master key handling, backups and how to scale out are covered in [docs/DEPLOY.md](docs/DEPLOY.md).
+
+Without Docker:
 
 ```bash
 npm run install:all
