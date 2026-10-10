@@ -1,0 +1,6 @@
+# Caddy obtains and renews the TLS certificate for ANYSSH_DOMAIN automatically.
+# WebSocket upgrades (the terminal) are proxied without extra configuration.
+{$ANYSSH_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}

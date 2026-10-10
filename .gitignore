@@ -6,3 +6,5 @@ data/
 *.db-wal
 .env
 coverage/
+secrets/
+backups/

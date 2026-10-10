@@ -1,0 +1,50 @@
+# Single-host production deployment: Any-SSH behind Caddy (automatic HTTPS).
+# See docs/DEPLOY.md. Before first start:
+#   mkdir -p secrets && openssl rand -base64 32 > secrets/master_key && chmod 600 secrets/master_key
+#   cp .env.example .env   # set ANYSSH_DOMAIN, ANYSSH_ORIGIN and SMTP settings
+services:
+  app:
+    build: .
+    image: any-ssh:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ANYSSH_MASTER_KEY_FILE: /run/secrets/master_key
+    secrets:
+      - master_key
+    volumes:
+      - any-ssh-data:/data
+    # Not published: only Caddy can reach it.
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ANYSSH_DOMAIN: ${ANYSSH_DOMAIN:?Set ANYSSH_DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+secrets:
+  master_key:
+    file: ./secrets/master_key
+
+volumes:
+  any-ssh-data:
+  caddy-data:
+  caddy-config:
