@@ -50,10 +50,27 @@ The installer adds an `any-ssh` command:
 | `sudo any-ssh update` | Backs up, downloads the latest version and restarts. Open terminals drop and users reconnect, so pick a quiet time. |
 | `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). |
 | `sudo any-ssh config` | Edits the settings, e.g. to add SMTP later, and applies them. |
+| `sudo any-ssh doctor` | Checks the domain's public DNS, this server's public IP and the HTTPS certificate, and says what to fix. |
 | `any-ssh status`, `any-ssh logs`, `any-ssh version` | Health, logs and the running version. |
 
 `update` replaces `compose.yaml`; put your own Compose changes in `/opt/any-ssh/compose.override.yaml`. To stay on a
 release instead of the newest build, set `ANYSSH_VERSION` in `.env` to a version tag such as `1.2` (see below).
+
+### If the site shows an SSL or certificate error
+
+Browsers show `ERR_SSL_PROTOCOL_ERROR` (or similar) when Caddy hasn't been able to get a certificate yet. Run
+`sudo any-ssh doctor`. The installer runs the same checks. Common causes:
+
+- **No public DNS record.** The domain must resolve *on the internet* to the server's public IP. A name that only
+  resolves on your own network (router DNS, `/etc/hosts`) isn't enough, because Let's Encrypt checks from outside.
+- **A server at home or behind a router.** Point the A record at your router's public IP and forward TCP ports 80 and
+  443 to the server. If your broadband IP changes, use your router's or DNS provider's dynamic DNS.
+- **Cloudflare's proxy (orange cloud)** in front of the domain. Set the record to "DNS only".
+- **Opening the IP address** instead of the domain. The certificate is only for the domain.
+
+After fixing it, `sudo any-ssh restart` makes Caddy try again straight away.
+
+If you can't or don't want to open ports, put Any-SSH behind a Cloudflare Tunnel instead.
 
 ### Images
 

@@ -1,8 +1,8 @@
 # Caddy obtains and renews the TLS certificate for ANYSSH_DOMAIN automatically.
 # WebSocket upgrades (the terminal) are proxied without extra configuration.
 {
-	# Let's Encrypt expiry notices go here (optional).
-	email {$ANYSSH_ACME_EMAIL}
+	# "email <address>" for Let's Encrypt expiry notices, or nothing (compose.yaml builds it from ANYSSH_ACME_EMAIL).
+	{$ANYSSH_CADDY_EMAIL}
 }
 
 {$ANYSSH_DOMAIN} {
