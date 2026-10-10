@@ -111,6 +111,14 @@ doctor() {
   [ -n "$d" ] || die "ANYSSH_DOMAIN isn't set in $DIR/.env."
   check_dns "$d" || status=1
   echo
+  if [ -z "$(dc ps -q --status running caddy 2>/dev/null || true)" ] || \
+    [ "$(docker inspect -f '{{.State.Restarting}}' "$(dc ps -q caddy)" 2>/dev/null)" = true ]; then
+    status=1
+    echo "  The HTTPS proxy (Caddy) isn't running. Checking its configuration:"
+    dc run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile 2>&1 |
+      grep -iE '"level":"(error|fatal)"|^error|Valid configuration' | tail -n 2 | sed 's/^/    /' || true
+    echo
+  fi
   if cert_ok "$d"; then
     printf '  %-26s %s\n' "HTTPS certificate:" "OK"
   else

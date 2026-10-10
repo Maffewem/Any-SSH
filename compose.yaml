@@ -43,7 +43,7 @@ services:
       - "443:443/udp"
     environment:
       ANYSSH_DOMAIN: ${ANYSSH_DOMAIN:?Set ANYSSH_DOMAIN in .env}
-      ANYSSH_ACME_EMAIL: ${ANYSSH_ACME_EMAIL:-}
+      ANYSSH_CADDY_EMAIL: ${ANYSSH_ACME_EMAIL:+email ${ANYSSH_ACME_EMAIL}}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

@@ -50,6 +50,9 @@ jobs:
           sudo ls /opt/any-ssh/backups | grep -q '^any-ssh-'
           sudo any-ssh status
           sudo any-ssh doctor || true   # the CI domain has no DNS, so this reports problems
+          # Caddy must stay up even without a certificate (e.g. no ACME email given)
+          sleep 5
+          test "$(docker inspect -f '{{.State.Running}} {{.State.Restarting}}' any-ssh-caddy-1)" = "true false"
 
   # Publishes the image that deploy/install.sh and `any-ssh update` pull, only after the tests and the smoke test pass.
   # main → :latest and :sha-<commit>; a tag like v1.2.3 → :1.2.3 and :1.2.
