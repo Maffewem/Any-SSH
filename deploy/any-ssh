@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Manage an Any-SSH server installed with deploy/install.sh. Run `any-ssh help` for the commands.
+set -euo pipefail
+
+DIR="${ANYSSH_DIR:-/opt/any-ssh}"
+REF="${ANYSSH_REF:-main}"
+SOURCE="${ANYSSH_SOURCE:-https://raw.githubusercontent.com/Maffewem/Any-SSH/${REF}}"
+KEEP_BACKUPS="${ANYSSH_KEEP_BACKUPS:-14}"
+
+say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
+die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<EOF
+Usage: any-ssh <command>
+
+  update        Back up, then download the latest version and restart (open terminals reconnect)
+  backup        Save a copy of the database to $DIR/backups (keeps the newest $KEEP_BACKUPS)
+  status        Show whether it is running and healthy
+  logs          Follow the logs (Ctrl+C to stop)
+  config        Edit the settings (.env), then apply them
+  start         Start it
+  stop          Stop it
+  restart       Restart it
+  setup-token   Show the one-time token for creating the first admin
+  version       Show the running version
+
+Install directory: $DIR (set ANYSSH_DIR to change). Put your own Compose changes in
+$DIR/compose.override.yaml; 'update' replaces compose.yaml.
+EOF
+}
+
+[ -f "$DIR/compose.yaml" ] || die "No Any-SSH install found in $DIR."
+cd "$DIR"
+dc() { docker compose "$@"; }
+
+need_root() { [ "$(id -u)" -eq 0 ] || die "Run it as root: sudo any-ssh $1"; }
+
+wait_healthy() {
+  local id status=""
+  for _ in $(seq 1 60); do
+    id="$(dc ps -q app 2>/dev/null || true)"
+    if [ -n "$id" ]; then
+      status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || true)"
+      [ "$status" = healthy ] && return 0
+    fi
+    sleep 2
+  done
+  dc logs --tail 30 app >&2 || true
+  die "Any-SSH did not become healthy (last status: ${status:-not running}). The logs above should say why."
+}
+
+running() { [ -n "$(dc ps -q --status running app 2>/dev/null || true)" ]; }
+
+backup() {
+  running || { say "Not running, so there is nothing to back up"; return 0; }
+  local name
+  name="any-ssh-$(date -u +%Y%m%dT%H%M%SZ).db"
+  dc exec -T app node dist/cli/backup.js "/data/backups/$name" >/dev/null
+  install -d -m 700 "$DIR/backups"
+  dc cp "app:/data/backups/$name" "$DIR/backups/$name" >/dev/null 2>&1 || die "Couldn't copy the backup out of the container."
+  dc exec -T app rm -f "/data/backups/$name"
+  chmod 600 "$DIR/backups/$name"
+  # Keep the newest $KEEP_BACKUPS.
+  find "$DIR/backups" -maxdepth 1 -name 'any-ssh-*.db' -printf '%f\n' | sort -r | tail -n +"$((KEEP_BACKUPS + 1))" |
+    while read -r old; do rm -f "$DIR/backups/$old"; done
+  say "Backup saved to $DIR/backups/$name"
+  echo "    Copy backups off this server too. They need the master key to restore, so store them apart from it."
+}
+
+fetch() { curl -fsSL --proto '=https,file' "$SOURCE/$1" -o "$2"; }
+
+case "${1:-help}" in
+  start)
+    need_root start
+    dc up -d --pull missing
+    wait_healthy
+    say "Running"
+    ;;
+  stop) need_root stop; dc stop ;;
+  restart)
+    need_root restart
+    dc up -d
+    dc restart app
+    wait_healthy
+    say "Restarted"
+    ;;
+  update)
+    need_root update
+    backup
+    say "Downloading the latest version"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    fetch compose.yaml "$tmp/compose.yaml"
+    fetch deploy/Caddyfile "$tmp/Caddyfile"
+    fetch deploy/any-ssh "$tmp/any-ssh"
+    install -m 644 "$tmp/compose.yaml" "$DIR/compose.yaml"
+    install -m 644 "$tmp/Caddyfile" "$DIR/deploy/Caddyfile"
+    dc pull --quiet || die "Couldn't download the new version. Check this server can reach ghcr.io, then try again."
+    dc up -d --remove-orphans
+    wait_healthy
+    # Replaced last: install writes a new file, so this running copy is unaffected.
+    install -m 755 "$tmp/any-ssh" /usr/local/bin/any-ssh
+    docker image prune -f >/dev/null || true
+    say "Updated and running"
+    ;;
+  backup) need_root backup; backup ;;
+  status) dc ps ;;
+  logs) dc logs -f --tail 100 ;;
+  config)
+    need_root config
+    "${EDITOR:-nano}" "$DIR/.env"
+    chmod 600 "$DIR/.env"
+    dc up -d
+    wait_healthy
+    say "Settings applied"
+    ;;
+  setup-token)
+    needed="$(dc exec -T app node -e "fetch('http://127.0.0.1:8080/api/setup').then(r=>r.json()).then(j=>console.log(j.needed))" 2>/dev/null || true)"
+    [ "$needed" = true ] || die "Setup is already done (or Any-SSH isn't running). Sign in with an admin account."
+    token="$(dc logs --no-log-prefix app 2>/dev/null | sed -n 's/^.*Setup token: *\([^ ]*\).*$/\1/p' | tail -n 1)"
+    [ -n "$token" ] || die "No setup token in the logs. It is only shown while no admin exists; restart to print a new one."
+    echo "$token"
+    ;;
+  version)
+    id="$(dc ps -q app 2>/dev/null || true)"
+    [ -n "$id" ] || die "Not running."
+    docker inspect -f '{{.Config.Image}}  version {{or (index .Config.Labels "org.opencontainers.image.version") "unknown"}}, commit {{or (index .Config.Labels "org.opencontainers.image.revision") "unknown"}}, built {{or (index .Config.Labels "org.opencontainers.image.created") "unknown"}}' "$id"
+    ;;
+  help | -h | --help) usage ;;
+  *) usage >&2; exit 1 ;;
+esac

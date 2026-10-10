@@ -136,7 +136,7 @@ creation/deletion, server changes, share grants/changes/revocations, host-key tr
 
 ## Deployment checklist
 
-`docker compose up` with the provided `compose.yaml` covers most of this; see [DEPLOY.md](DEPLOY.md).
+The installer (`deploy/install.sh`) and the provided `compose.yaml` cover most of this; see [DEPLOY.md](DEPLOY.md).
 
 - Run behind a TLS-terminating reverse proxy (Caddy, nginx, Traefik). Set `NODE_ENV=production`,
   `ANYSSH_COOKIE_SECURE=true`, `ANYSSH_TRUST_PROXY=true` and `ANYSSH_ORIGIN=https://your.host`. The proxy must pass

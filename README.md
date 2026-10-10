@@ -45,16 +45,15 @@ the SSRF notes in the security doc).
 
 ## Production
 
-The recommended setup is Docker Compose with Caddy for automatic HTTPS:
+On a fresh Linux server with a domain pointing at it (ports 80 and 443 open):
 
 ```bash
-mkdir -p secrets && openssl rand -base64 32 > secrets/master_key
-sudo chown 1000:1000 secrets/master_key && chmod 600 secrets/master_key
-cp .env.example .env              # set ANYSSH_DOMAIN, ANYSSH_ORIGIN, SMTP
-docker compose up -d --build
+curl -fsSL https://raw.githubusercontent.com/Maffewem/Any-SSH/main/deploy/install.sh | sudo bash
 ```
 
-Hosting choices, master key handling, backups and how to scale out are covered in [docs/DEPLOY.md](docs/DEPLOY.md).
+It installs Docker if needed, asks for your domain and email, generates the master key and settings, schedules nightly
+backups and starts Any-SSH with automatic HTTPS. Update later with `sudo any-ssh update`. Details, hosting choices and
+how to scale out are in [docs/DEPLOY.md](docs/DEPLOY.md).
 
 Without Docker:
 
