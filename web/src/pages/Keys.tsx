@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { del, formatTime, get, post, type SshKey } from '../api';
+import { del, downloadText, formatTime, get, post, type SshKey } from '../api';
 import { CopyButton, Field, Form, Modal, useAsync } from '../ui';
 
 export function KeysPage() {
   const { data, error, reload } = useAsync(() => get<{ keys: SshKey[] }>('/api/keys'), []);
   const [dialog, setDialog] = useState<'generate' | 'import' | null>(null);
+  const [exporting, setExporting] = useState<SshKey | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   return (
@@ -19,8 +20,8 @@ export function KeysPage() {
         </div>
       </div>
       <p className="muted small">
-        Private keys are encrypted on the server and never leave it, not even to you. Add the public key to the server’s{' '}
-        <code>~/.ssh/authorized_keys</code>.
+        Private keys are encrypted on the server. Add the public key to the server’s <code>~/.ssh/authorized_keys</code>.
+        You can export a private key to keep a copy elsewhere; it asks for your password first.
       </p>
       {(error || actionError) && <p className="error">{error ?? actionError}</p>}
       {data?.keys.length === 0 && <div className="empty card">No keys yet.</div>}
@@ -36,6 +37,7 @@ export function KeysPage() {
               </div>
               <div className="row">
                 <CopyButton text={k.publicKey} label="Copy public key" />
+                <button onClick={() => setExporting(k)}>Export</button>
                 <button
                   className="ghost"
                   onClick={async () => {
@@ -59,6 +61,7 @@ export function KeysPage() {
       </div>
       {dialog === 'generate' && <GenerateDialog onClose={() => setDialog(null)} onDone={() => (setDialog(null), reload())} />}
       {dialog === 'import' && <ImportDialog onClose={() => setDialog(null)} onDone={() => (setDialog(null), reload())} />}
+      {exporting && <ExportDialog keyRow={exporting} onClose={() => setExporting(null)} />}
     </section>
   );
 }
@@ -118,6 +121,36 @@ function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
           <input type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} autoComplete="off" />
         </Field>
       </Form>
+    </Modal>
+  );
+}
+
+function ExportDialog({ keyRow, onClose }: { keyRow: SshKey; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [done, setDone] = useState(false);
+  return (
+    <Modal title={`Export ${keyRow.name}`} onClose={onClose}>
+      <p className="muted small">
+        This downloads the private key itself. Anyone who has it can log in as you, so keep it somewhere safe and set its
+        permissions to <code>600</code>. The export is recorded in the audit log.
+      </p>
+      {done ? (
+        <p className="ok">Downloaded. Delete it from your Downloads folder once you have put it where it belongs.</p>
+      ) : (
+        <Form
+          submit="Confirm and download"
+          onSubmit={async () => {
+            const res = await post<{ filename: string; privateKey: string }>(`/api/keys/${keyRow.id}/export`, { password });
+            setPassword('');
+            downloadText(res.filename, res.privateKey);
+            setDone(true);
+          }}
+        >
+          <Field label="Your Any-SSH password">
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" autoFocus required />
+          </Field>
+        </Form>
+      )}
     </Modal>
   );
 }

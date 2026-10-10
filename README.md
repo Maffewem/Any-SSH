@@ -10,10 +10,12 @@ Install it as an app from Safari ("Add to Home Screen") or Chrome.
 - **Email:** invites, "forgot password" reset links and security notices over SMTP (logged to the console in
   development).
 - **Saved servers** with key, stored-password or ask-each-time authentication, and pinned host keys.
-- **SSH keys:** generate (Ed25519, ECDSA, RSA 4096) or import. Private keys are encrypted at rest and never leave the
-  server.
-- **Sharing:** share a server with any number of people as *use* or *manage*. They connect with the owner's credentials
-  without ever seeing them; revoking access closes their open terminals.
+- **SSH keys:** generate (Ed25519, ECDSA, RSA 4096) or import. Private keys are encrypted at rest, and only their owner
+  can export one, after confirming their password.
+- **Sharing:** share a server with any number of people as *use* or *manage*, and choose whether they connect with the
+  server's saved credentials (without ever seeing them) or must supply their own. Managers can only share the server
+  onwards if the owner allows it. Revoking access closes their open terminals.
+- **One-off keys:** paste a private key when connecting and it is used for that session only, never saved.
 - **Terminal:** xterm.js over a WebSocket, multiple tabs, and an extra-keys bar (Esc, Tab, Ctrl, Alt, arrows) on touch
   devices.
 

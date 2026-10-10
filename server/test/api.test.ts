@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BuiltApp } from '../src/app.js';
 import { hotp, totpCounter } from '../src/totp.js';
+import ssh2 from 'ssh2';
 import { ADMIN_PASSWORD, Client, createUser, makeApp, setupAdmin } from './helpers.js';
 
 let built: BuiltApp;
@@ -205,12 +206,16 @@ describe('servers and sharing', () => {
     expect((await user.client.post(`/api/servers/${server.id}/connect`)).body.ticket).toBeTruthy();
     expect((await user.client.patch(`/api/servers/${server.id}`, { name: 'x' })).status).toBe(403);
 
-    // "manage" can rename and share for use, but cannot repoint the server or hand out manage.
+    // "manage" can rename, but cannot repoint the server, delete it, or re-share it by default.
     expect((await manager.client.patch(`/api/servers/${server.id}`, { name: 'production' })).status).toBe(200);
     expect((await manager.client.patch(`/api/servers/${server.id}`, { host: 'attacker.example' })).status).toBe(403);
+    expect((await manager.client.put(`/api/servers/${server.id}/shares/${outsider.id}`, { permission: 'use' })).status).toBe(403);
+    expect((await manager.client.del(`/api/servers/${server.id}`)).status).toBe(403);
+
+    // Once the owner allows re-sharing, the manager can hand out "use" but still not "manage".
+    await owner.client.put(`/api/servers/${server.id}/shares/${manager.id}`, { permission: 'manage', canReshare: true });
     expect((await manager.client.put(`/api/servers/${server.id}/shares/${outsider.id}`, { permission: 'manage' })).status).toBe(403);
     expect((await manager.client.put(`/api/servers/${server.id}/shares/${outsider.id}`, { permission: 'use' })).status).toBe(200);
-    expect((await manager.client.del(`/api/servers/${server.id}`)).status).toBe(403);
 
     const shares = (await owner.client.get(`/api/servers/${server.id}/shares`)).body.shares;
     expect(shares.map((s: { username: string }) => s.username).sort()).toEqual(['manager', 'outsider', 'user1']);
@@ -218,6 +223,94 @@ describe('servers and sharing', () => {
     // Revocation is immediate.
     await owner.client.del(`/api/servers/${server.id}/shares/${user.id}`);
     expect((await user.client.post(`/api/servers/${server.id}/connect`)).status).toBe(404);
+  });
+
+  it('only lets a manager re-share when the owner allowed it, and never beyond their own grant', async () => {
+    const { owner, manager, outsider, server } = await scenario();
+    await owner.client.put(`/api/servers/${server.id}/shares/${manager.id}`, { permission: 'manage' });
+
+    // Default is no re-sharing, and a manager cannot grant themselves the right.
+    expect((await owner.client.get(`/api/servers/${server.id}/shares`)).body.shares[0].canReshare).toBe(false);
+    const blocked = await manager.client.put(`/api/servers/${server.id}/shares/${outsider.id}`, { permission: 'use' });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error).toMatch(/not allowed you to share/i);
+    expect(
+      (await manager.client.put(`/api/servers/${server.id}/shares/${manager.id}`, { permission: 'manage', canReshare: true })).status,
+    ).toBe(400);
+
+    // A manager who must bring their own credentials cannot pass the owner's on to anyone else.
+    await owner.client.put(`/api/servers/${server.id}/shares/${manager.id}`, { permission: 'manage', canReshare: true, credentials: 'own' });
+    expect((await manager.client.put(`/api/servers/${server.id}/shares/${outsider.id}`, { permission: 'use' })).status).toBe(403);
+    expect(
+      (await manager.client.put(`/api/servers/${server.id}/shares/${outsider.id}`, { permission: 'use', credentials: 'own' })).status,
+    ).toBe(200);
+    const outsiderShare = (await owner.client.get(`/api/servers/${server.id}/shares`)).body.shares.find(
+      (s: { username: string }) => s.username === 'outsider',
+    );
+    expect(outsiderShare).toMatchObject({ credentials: 'own', canReshare: false, sharedBy: 'manager' });
+
+    // Withdrawing re-sharing takes effect at once.
+    await owner.client.put(`/api/servers/${server.id}/shares/${manager.id}`, { permission: 'manage', canReshare: false });
+    expect((await manager.client.put(`/api/servers/${server.id}/shares/${outsider.id}`, { permission: 'use' })).status).toBe(403);
+  });
+
+  it('lets the owner say whose credentials a share connects with', async () => {
+    const { owner, user, server, key } = await scenario();
+    await owner.client.put(`/api/servers/${server.id}/shares/${user.id}`, { permission: 'use', credentials: 'own' });
+    const seen = (await user.client.get('/api/servers')).body.servers[0];
+    expect(seen.credentials).toBe('own');
+    expect(seen.canShare).toBe(false);
+
+    // The owner's saved key is off limits; their own key, a one-off key or a password prompt are not.
+    const saved = await user.client.post(`/api/servers/${server.id}/connect`);
+    expect(saved.status).toBe(400);
+    expect(saved.body.code).toBe('own_credentials_required');
+    expect((await user.client.post(`/api/servers/${server.id}/connect`, { credential: { type: 'password' } })).body.ticket).toBeTruthy();
+
+    const ownKey = (await user.client.post('/api/keys/generate', { name: 'mine' })).body.key;
+    expect(
+      (await user.client.post(`/api/servers/${server.id}/connect`, { credential: { type: 'key', keyId: ownKey.id } })).body.ticket,
+    ).toBeTruthy();
+    // Someone else's stored key is not a credential you may pick.
+    expect((await user.client.post(`/api/servers/${server.id}/connect`, { credential: { type: 'key', keyId: key.id } })).status).toBe(400);
+
+    // Switching back to the owner's credentials restores the plain connect.
+    await owner.client.put(`/api/servers/${server.id}/shares/${user.id}`, { permission: 'use', credentials: 'owner' });
+    expect((await user.client.post(`/api/servers/${server.id}/connect`)).body.ticket).toBeTruthy();
+  });
+
+  it('takes a one-off private key without ever storing it', async () => {
+    const { owner, server } = await scenario();
+    const before = (built.ctx.db.prepare('SELECT COUNT(*) AS n FROM ssh_keys').get() as { n: number }).n;
+    const pair = ssh2.utils.generateKeyPairSync('ed25519');
+
+    expect((await owner.client.post(`/api/servers/${server.id}/connect`, { credential: { type: 'oneoff', privateKey: 'not a key' } })).status).toBe(400);
+    const res = await owner.client.post(`/api/servers/${server.id}/connect`, {
+      credential: { type: 'oneoff', privateKey: pair.private },
+      username: 'someone-else',
+    });
+    expect(res.body.ticket).toBeTruthy();
+    expect((built.ctx.db.prepare('SELECT COUNT(*) AS n FROM ssh_keys').get() as { n: number }).n).toBe(before);
+    const rows = JSON.stringify(built.ctx.db.prepare('SELECT * FROM servers').all());
+    expect(rows).not.toContain('PRIVATE KEY');
+  });
+
+  it('exports a private key only to its owner, and only with the password', async () => {
+    const { admin, owner, user } = await scenario();
+    const key = (await owner.client.post('/api/keys/generate', { name: 'work servers', type: 'ed25519' })).body.key;
+
+    expect((await owner.client.post(`/api/keys/${key.id}/export`, { password: 'wrong-password-here' })).status).toBe(400);
+    expect((await user.client.post(`/api/keys/${key.id}/export`, { password: user.password })).status).toBe(404);
+
+    const res = await owner.client.post(`/api/keys/${key.id}/export`, { password: owner.password });
+    expect(res.status).toBe(200);
+    expect(res.body.privateKey).toContain('PRIVATE KEY');
+    expect(res.body.filename).toBe('id_ed25519_work-servers');
+    expect(res.body.passphraseProtected).toBe(false);
+    // The export is recorded, without the key material.
+    const log = JSON.stringify((await admin.get('/api/admin/audit?limit=500')).body);
+    expect(log).toContain('key.export');
+    expect(log).not.toContain('PRIVATE KEY');
   });
 
   it('stores passwords encrypted and resets host key pin when the endpoint changes', async () => {

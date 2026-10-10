@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { z } from 'zod';
 import { HttpError, badRequest, clientIp, forbidden, idParam, notFound, parse, requireUser } from '../http.js';
-import type { AppContext, ServerAccess, ServerRow, SharePermission, SshKeyRow, UserRow } from '../types.js';
+import type { ConnectCredential } from '../ssh/registry.js';
+import type { AppContext, ServerAccess, ServerRow, ServerShareRow, ShareCredentials, SharePermission, SshKeyRow, UserRow } from '../types.js';
+import { inspectPrivateKey, normalisePrivateKey } from './keys.js';
 
 const hostname = z
   .string()
@@ -39,7 +41,26 @@ const updateBody = z
     notes: z.string().max(2000).optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
-const shareBody = z.object({ permission: z.enum(['use', 'manage']) });
+const shareBody = z.object({
+  permission: z.enum(['use', 'manage']),
+  /** Omitted: keep the current setting (new shares use the owner's credentials). */
+  credentials: z.enum(['owner', 'own']).optional(),
+  /** Only meaningful with `manage`, and only the owner may set it. */
+  canReshare: z.boolean().optional(),
+});
+const connectBody = z
+  .object({
+    credential: z
+      .discriminatedUnion('type', [
+        z.object({ type: z.literal('saved') }),
+        z.object({ type: z.literal('key'), keyId: z.uuid() }),
+        z.object({ type: z.literal('oneoff'), privateKey: z.string().min(1).max(64 * 1024), passphrase: z.string().max(1024).optional() }),
+        z.object({ type: z.literal('password') }),
+      ])
+      .default({ type: 'saved' }),
+    username: sshUser.optional(),
+  })
+  .default({ credential: { type: 'saved' } });
 const shareParams = z.object({ id: z.uuid(), userId: z.uuid() });
 
 /** Fields a "manage" grantee may change. Connection details and credentials stay with the owner. */
@@ -47,20 +68,35 @@ const MANAGER_EDITABLE = new Set(['name', 'notes']);
 
 export const serverPasswordContext = (serverId: string) => `server:${serverId}:password`;
 
-export function getServerAccess(ctx: AppContext, userId: string, serverId: string): { server: ServerRow; access: ServerAccess } | null {
+export interface ServerGrant {
+  server: ServerRow;
+  access: ServerAccess;
+  /** Whose credentials this user may connect with. Always 'owner' for the owner. */
+  credentials: ShareCredentials;
+  /** Whether this user may share the server with others. */
+  canShare: boolean;
+}
+
+export function getServerAccess(ctx: AppContext, userId: string, serverId: string): ServerGrant | null {
   const server = ctx.db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId) as ServerRow | undefined;
   if (!server) return null;
-  if (server.owner_id === userId) return { server, access: 'owner' };
-  const share = ctx.db
-    .prepare('SELECT permission FROM server_shares WHERE server_id = ? AND user_id = ?')
-    .get(serverId, userId) as { permission: SharePermission } | undefined;
-  return share ? { server, access: share.permission } : null;
+  if (server.owner_id === userId) return { server, access: 'owner', credentials: 'owner', canShare: true };
+  const share = ctx.db.prepare('SELECT * FROM server_shares WHERE server_id = ? AND user_id = ?').get(serverId, userId) as
+    | ServerShareRow
+    | undefined;
+  if (!share) return null;
+  return {
+    server,
+    access: share.permission,
+    credentials: share.credentials,
+    canShare: share.permission === 'manage' && share.can_reshare === 1,
+  };
 }
 
 export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): void {
   const { db, box, audit, terminals } = ctx;
 
-  function view(server: ServerRow, access: ServerAccess) {
+  function view({ server, access, credentials, canShare }: ServerGrant) {
     const owner = db.prepare('SELECT username, display_name FROM users WHERE id = ?').get(server.owner_id) as
       | Pick<UserRow, 'username' | 'display_name'>
       | undefined;
@@ -84,6 +120,8 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       hostKeyFingerprint: server.host_key_fingerprint,
       notes: server.notes,
       access,
+      credentials,
+      canShare,
       owner: owner ? { id: server.owner_id, username: owner.username, displayName: owner.display_name } : null,
       shareCount,
       createdAt: server.created_at,
@@ -112,25 +150,20 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
 
   app.get('/api/servers', async (req) => {
     const { user } = requireUser(req);
-    const owned = db.prepare('SELECT * FROM servers WHERE owner_id = ?').all(user.id) as ServerRow[];
-    const shared = db
-      .prepare(
-        `SELECT s.*, sh.permission AS _permission FROM servers s
-         JOIN server_shares sh ON sh.server_id = s.id WHERE sh.user_id = ?`,
-      )
-      .all(user.id) as (ServerRow & { _permission: SharePermission })[];
-    const servers = [
-      ...owned.map((s) => view(s, 'owner')),
-      ...shared.map(({ _permission, ...s }) => view(s, _permission)),
-    ].sort((a, b) => a.name.localeCompare(b.name));
+    const owned = db.prepare('SELECT id FROM servers WHERE owner_id = ?').all(user.id) as { id: string }[];
+    const shared = db.prepare('SELECT server_id AS id FROM server_shares WHERE user_id = ?').all(user.id) as { id: string }[];
+    const servers = [...owned, ...shared]
+      .map(({ id }) => getServerAccess(ctx, user.id, id))
+      .filter((g): g is ServerGrant => g !== null)
+      .map(view)
+      .sort((a, b) => a.name.localeCompare(b.name));
     return { servers };
   });
 
   app.get('/api/servers/:id', async (req) => {
     const { user } = requireUser(req);
     const { id } = parse(idParam, req.params);
-    const { server, access } = load(user.id, id, ['owner', 'manage', 'use']);
-    return { server: view(server, access) };
+    return { server: view(load(user.id, id, ['owner', 'manage', 'use'])) };
   });
 
   app.post('/api/servers', async (req) => {
@@ -153,7 +186,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       actorId: user.id, actorUsername: user.username, action: 'server.create', targetType: 'server', targetId: id,
       ip: clientIp(req), details: { name: body.name, host: body.host, port: body.port, username: body.username, authMethod: body.authMethod },
     });
-    return { server: view(db.prepare('SELECT * FROM servers WHERE id = ?').get(id) as ServerRow, 'owner') };
+    return { server: view(getServerAccess(ctx, user.id, id)!) };
   });
 
   app.patch('/api/servers/:id', async (req) => {
@@ -190,7 +223,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       actorId: user.id, actorUsername: user.username, action: 'server.update', targetType: 'server', targetId: id,
       ip: clientIp(req), details: { ...logged, passwordChanged: !!body.password },
     });
-    return { server: view(db.prepare('SELECT * FROM servers WHERE id = ?').get(id) as ServerRow, access) };
+    return { server: view(getServerAccess(ctx, user.id, id)!) };
   });
 
   app.delete('/api/servers/:id', async (req) => {
@@ -219,6 +252,13 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
   });
 
   // ---- Sharing ----
+  // The owner shares freely. A manager may share onwards only if the owner allowed it, only for
+  // `use`, and never with more than they have themselves (no handing out the owner's credentials
+  // if they were made to bring their own).
+
+  function requireCanShare(grant: ServerGrant) {
+    if (!grant.canShare) throw forbidden('The owner has not allowed you to share this server with anyone else.');
+  }
 
   app.get('/api/servers/:id/shares', async (req) => {
     const { user } = requireUser(req);
@@ -226,13 +266,21 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     load(user.id, id, ['owner', 'manage']);
     const rows = db
       .prepare(
-        `SELECT sh.user_id, sh.permission, sh.created_at, u.username, u.display_name FROM server_shares sh
-         JOIN users u ON u.id = sh.user_id WHERE sh.server_id = ? ORDER BY u.username`,
+        `SELECT sh.*, u.username, u.display_name, c.username AS created_by_username FROM server_shares sh
+         JOIN users u ON u.id = sh.user_id LEFT JOIN users c ON c.id = sh.created_by
+         WHERE sh.server_id = ? ORDER BY u.username`,
       )
-      .all(id) as { user_id: string; permission: SharePermission; created_at: number; username: string; display_name: string }[];
+      .all(id) as (ServerShareRow & { username: string; display_name: string; created_by_username: string | null })[];
     return {
       shares: rows.map((r) => ({
-        userId: r.user_id, username: r.username, displayName: r.display_name, permission: r.permission, createdAt: r.created_at,
+        userId: r.user_id,
+        username: r.username,
+        displayName: r.display_name,
+        permission: r.permission,
+        credentials: r.credentials,
+        canReshare: r.can_reshare === 1,
+        sharedBy: r.created_by_username,
+        createdAt: r.created_at,
       })),
     };
   });
@@ -240,26 +288,45 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
   app.put('/api/servers/:id/shares/:userId', async (req) => {
     const { user } = requireUser(req);
     const { id, userId } = parse(shareParams, req.params);
-    const { permission } = parse(shareBody, req.body);
-    const { server, access } = load(user.id, id, ['owner', 'manage']);
-
+    const body = parse(shareBody, req.body);
+    const grant = load(user.id, id, ['owner', 'manage']);
+    const { server, access } = grant;
     const target = db.prepare("SELECT * FROM users WHERE id = ? AND status = 'active'").get(userId) as UserRow | undefined;
     if (!target) throw notFound('User not found');
     if (target.id === server.owner_id) throw badRequest('The owner already has full access.');
-    const existing = db.prepare('SELECT permission FROM server_shares WHERE server_id = ? AND user_id = ?').get(id, userId) as
-      | { permission: SharePermission }
+    if (target.id === user.id) throw badRequest('You cannot change your own access.');
+    requireCanShare(grant);
+    const existing = db.prepare('SELECT * FROM server_shares WHERE server_id = ? AND user_id = ?').get(id, userId) as
+      | ServerShareRow
       | undefined;
-    if (access === 'manage' && (permission === 'manage' || existing?.permission === 'manage')) {
-      throw forbidden('Only the owner can grant or change manage access.');
+
+    const permission = body.permission;
+    const credentials: ShareCredentials = body.credentials ?? existing?.credentials ?? 'owner';
+    const canReshare = permission === 'manage' && (body.canReshare ?? existing?.can_reshare === 1);
+
+    if (access === 'manage') {
+      if (permission === 'manage' || existing?.permission === 'manage') {
+        throw forbidden('Only the owner can grant or change manage access.');
+      }
+      if (body.canReshare) throw forbidden('Only the owner can allow re-sharing.');
+      if (credentials === 'owner' && grant.credentials === 'own') {
+        throw forbidden('You connect with your own credentials, so anyone you share with must bring theirs too.');
+      }
     }
 
     db.prepare(
-      `INSERT INTO server_shares (server_id, user_id, permission, created_by, created_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (server_id, user_id) DO UPDATE SET permission = excluded.permission`,
-    ).run(id, userId, permission, user.id, Date.now());
+      `INSERT INTO server_shares (server_id, user_id, permission, credentials, can_reshare, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (server_id, user_id) DO UPDATE SET
+         permission = excluded.permission, credentials = excluded.credentials, can_reshare = excluded.can_reshare`,
+    ).run(id, userId, permission, credentials, canReshare ? 1 : 0, user.id, Date.now());
+    // Someone who must now bring their own credentials loses any session using the owner's.
+    if (existing?.credentials === 'owner' && credentials === 'own') {
+      terminals.closeForUserServer(userId, id, 'The owner now requires you to use your own credentials for this server.');
+    }
     audit.record({
       actorId: user.id, actorUsername: user.username, action: existing ? 'share.update' : 'share.grant', targetType: 'server',
-      targetId: id, ip: clientIp(req), details: { server: server.name, grantee: target.username, permission },
+      targetId: id, ip: clientIp(req), details: { server: server.name, grantee: target.username, permission, credentials, canReshare },
     });
     return { ok: true };
   });
@@ -275,7 +342,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     if (!share) throw notFound('Share not found');
 
     const leaving = userId === user.id;
-    const canRevoke = found.access === 'owner' || (found.access === 'manage' && share.permission === 'use');
+    const canRevoke = found.access === 'owner' || (found.canShare && share.permission === 'use');
     if (!leaving && !canRevoke) throw forbidden('You cannot remove that person’s access.');
 
     db.prepare('DELETE FROM server_shares WHERE server_id = ? AND user_id = ?').run(id, userId);
@@ -293,11 +360,41 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
   app.post('/api/servers/:id/connect', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
     const { user, session } = requireUser(req);
     const { id } = parse(idParam, req.params);
-    const { server, access } = load(user.id, id, ['owner', 'manage', 'use']);
+    const body = parse(connectBody, req.body ?? undefined);
+    const grant = load(user.id, id, ['owner', 'manage', 'use']);
+    const { server, access } = grant;
     if (terminals.countForUser(user.id) >= ctx.config.maxTerminalsPerUser) {
       throw new HttpError(429, 'You have too many open terminals. Close one first.', 'too_many_terminals');
     }
-    if (server.auth_method === 'key' && !server.key_id) throw badRequest('This server has no SSH key attached.');
-    return { ticket: terminals.issueTicket({ userId: user.id, serverId: server.id, sessionIdHash: session.id_hash, access }) };
+
+    let credential: ConnectCredential;
+    const choice = body.credential;
+    if (choice.type === 'saved') {
+      if (grant.credentials === 'own') {
+        throw new HttpError(400, 'The owner asked you to connect with your own credentials.', 'own_credentials_required');
+      }
+      // The owner's credentials belong to the owner's login on that server.
+      if (body.username && body.username !== server.username) {
+        throw badRequest('Choose your own credentials to log in as a different user.');
+      }
+      if (server.auth_method === 'key' && !server.key_id) throw badRequest('This server has no SSH key attached.');
+      credential = choice;
+    } else if (choice.type === 'key') {
+      assertOwnKey(user.id, choice.keyId);
+      credential = choice;
+    } else if (choice.type === 'oneoff') {
+      // Checked now so a bad paste fails here, not mid-handshake. Kept in memory only.
+      const privateKey = normalisePrivateKey(choice.privateKey);
+      const { fingerprint } = inspectPrivateKey(privateKey, choice.passphrase || undefined);
+      credential = { type: 'oneoff', privateKey, fingerprint, ...(choice.passphrase ? { passphrase: choice.passphrase } : {}) };
+    } else {
+      credential = choice;
+    }
+
+    const ticket = terminals.issueTicket({
+      userId: user.id, serverId: server.id, sessionIdHash: session.id_hash, access, credential,
+      username: body.username ?? server.username,
+    });
+    return { ticket };
   });
 }

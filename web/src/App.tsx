@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { get, post, setUnauthenticatedHandler, type Server, type User } from './api';
+import { get, post, setUnauthenticatedHandler, type ConnectChoice, type Server, type User } from './api';
 import { AccountPage } from './pages/Account';
 import { AdminUsersPage, AuditPage } from './pages/Admin';
 import { ForcePasswordChangePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
@@ -13,6 +13,8 @@ type Boot = { kind: 'loading' } | { kind: 'setup' } | { kind: 'login'; mfaPendin
 interface OpenTerminal {
   tabId: string;
   server: Server;
+  /** Credentials chosen for this tab; absent means the server's saved ones. Memory only. */
+  choice?: ConnectChoice;
   attempt: number;
   state: TerminalState;
 }
@@ -92,9 +94,9 @@ export function App() {
     return <ForcePasswordChangePage onDone={(u) => setBoot({ kind: 'app', user: u })} onLogout={logout} />;
   }
 
-  const connect = (server: Server) => {
+  const connect = (server: Server, choice?: ConnectChoice) => {
     const tabId = crypto.randomUUID();
-    setTerminals((ts) => [...ts, { tabId, server, attempt: 0, state: 'connecting' }]);
+    setTerminals((ts) => [...ts, { tabId, server, choice, attempt: 0, state: 'connecting' }]);
     setActiveTab(tabId);
   };
   const closeTab = (tabId: string) => {
@@ -165,6 +167,7 @@ export function App() {
           <TerminalSession
             key={t.tabId}
             server={t.server}
+            choice={t.choice}
             attempt={t.attempt}
             active={activeTab === t.tabId}
             onState={(state) => updateTab(t.tabId, { state })}
