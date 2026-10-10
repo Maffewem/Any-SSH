@@ -5,8 +5,10 @@ Install it as an app from Safari ("Add to Home Screen") or Chrome.
 
 - **Accounts:** sign-in with Argon2id-hashed passwords, optional TOTP two-factor with recovery codes, device list and
   remote sign-out.
-- **Administration:** admins create users (temporary password, forced change), set roles, disable, unlock, reset
-  password or 2FA, delete, and read a tamper-evident audit log.
+- **Administration:** admins invite users by email (or hand out a temporary password), set roles, disable, unlock,
+  send reset links, reset 2FA, delete, and read a tamper-evident audit log.
+- **Email:** invites, "forgot password" reset links and security notices over SMTP (logged to the console in
+  development).
 - **Saved servers** with key, stored-password or ask-each-time authentication, and pinned host keys.
 - **SSH keys:** generate (Ed25519, ECDSA, RSA 4096) or import. Private keys are encrypted at rest and never leave the
   server.
@@ -49,6 +51,11 @@ cp .env.example .env              # fill in ANYSSH_MASTER_KEY and ANYSSH_ORIGIN
 set -a; . ./.env; set +a
 npm start                         # serves the UI and API on ANYSSH_HOST:ANYSSH_PORT
 ```
+
+Set the `ANYSSH_SMTP_*` variables in `.env` to send invites and password resets by email.
+
+To rotate the master key later: `npm --prefix server run gen-key`, restart with the new key in `ANYSSH_MASTER_KEY` and the
+old one in `ANYSSH_PREVIOUS_MASTER_KEYS`, run `npm --prefix server run rotate-keys`, then remove the old key.
 
 Put it behind a TLS reverse proxy that forwards WebSocket upgrades. Example Caddyfile:
 

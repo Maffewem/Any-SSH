@@ -2,6 +2,7 @@ import type { AuditLog } from './audit.js';
 import type { Config } from './config.js';
 import type { SecretBox } from './crypto.js';
 import type { DB } from './db.js';
+import type { Mailer } from './mail.js';
 import type { SessionStore } from './sessions.js';
 import type { TerminalRegistry } from './ssh/registry.js';
 
@@ -11,6 +12,7 @@ export interface UserRow {
   id: string;
   username: string;
   display_name: string;
+  email: string | null;
   password_hash: string;
   role: Role;
   status: 'active' | 'disabled';
@@ -46,6 +48,7 @@ export interface SshKeyRow {
   fingerprint: string;
   private_key_enc: string;
   created_at: number;
+  last_used_at: number | null;
 }
 
 export interface ServerRow {
@@ -75,6 +78,7 @@ export interface AppContext {
   audit: AuditLog;
   sessions: SessionStore;
   terminals: TerminalRegistry;
+  mailer: Mailer;
 }
 
 export function publicUser(u: UserRow) {
@@ -82,6 +86,7 @@ export function publicUser(u: UserRow) {
     id: u.id,
     username: u.username,
     displayName: u.display_name,
+    email: u.email,
     role: u.role,
     status: u.status,
     mfaEnabled: u.totp_enabled === 1,

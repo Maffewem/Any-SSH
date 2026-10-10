@@ -2,6 +2,7 @@ export interface User {
   id: string;
   username: string;
   displayName: string;
+  email: string | null;
   role: 'admin' | 'user';
   status: 'active' | 'disabled';
   mfaEnabled: boolean;
@@ -37,6 +38,7 @@ export interface SshKey {
   publicKey: string;
   fingerprint: string;
   createdAt: number;
+  lastUsedAt: number | null;
 }
 
 export interface Share {
@@ -68,6 +70,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Calls that are expected to fail with 401 while signed out; they must not bounce to the login page. */
+const SIGNED_OUT_PATHS = ['/api/auth/login', '/api/auth/mfa', '/api/auth/me', '/api/auth/forgot', '/api/auth/token/'];
+
 let onUnauthenticated: (() => void) | null = null;
 export function setUnauthenticatedHandler(fn: () => void) {
   onUnauthenticated = fn;
@@ -87,7 +92,7 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     const err = new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, data?.code);
-    if (res.status === 401 && path !== '/api/auth/login' && path !== '/api/auth/mfa' && path !== '/api/auth/me') {
+    if (res.status === 401 && !SIGNED_OUT_PATHS.some((p) => path.startsWith(p))) {
       onUnauthenticated?.();
     }
     throw err;

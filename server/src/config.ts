@@ -8,6 +8,8 @@ export interface Config {
   dbPath: string;
   /** 32-byte key used to encrypt secrets (private keys, passwords, TOTP seeds) at rest. */
   masterKey: Buffer;
+  /** Retired master keys, still accepted for decryption until `npm run rotate-keys` re-seals everything. */
+  previousMasterKeys: Buffer[];
   /** Public origin(s) of the web app, e.g. https://ssh.example.com. Used for Origin checks. */
   allowedOrigins: string[];
   cookieSecure: boolean;
@@ -20,6 +22,20 @@ export interface Config {
   allowLoopbackTargets: boolean;
   webRoot: string | null;
   logLevel: string;
+  /** Base URL used in links inside emails. */
+  publicUrl: string;
+  /** Outgoing mail. null = emails are written to the server log instead (development). */
+  smtp: SmtpConfig | null;
+  mailFrom: string;
+}
+
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  /** true = implicit TLS (port 465); otherwise STARTTLS is required. */
+  secure: boolean;
+  user?: string;
+  pass?: string;
 }
 
 function bool(v: string | undefined, dflt: boolean): boolean {
@@ -47,6 +63,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   let rawKey = env.ANYSSH_MASTER_KEY;
   if (!rawKey && env.ANYSSH_MASTER_KEY_FILE) rawKey = readFileSync(env.ANYSSH_MASTER_KEY_FILE, 'utf8');
+  let rawPrevious = env.ANYSSH_PREVIOUS_MASTER_KEYS ?? '';
+  if (!rawPrevious && env.ANYSSH_PREVIOUS_MASTER_KEYS_FILE) rawPrevious = readFileSync(env.ANYSSH_PREVIOUS_MASTER_KEYS_FILE, 'utf8');
+  let smtpPass = env.ANYSSH_SMTP_PASS;
+  if (!smtpPass && env.ANYSSH_SMTP_PASS_FILE) smtpPass = readFileSync(env.ANYSSH_SMTP_PASS_FILE, 'utf8').trim();
+  // Drop secrets from process.env once read, so child processes do not inherit them and code
+  // that dumps the environment (crash reporters, debug endpoints) cannot leak them.
+  if (env === process.env) {
+    delete process.env.ANYSSH_MASTER_KEY;
+    delete process.env.ANYSSH_PREVIOUS_MASTER_KEYS;
+    delete process.env.ANYSSH_SMTP_PASS;
+  }
   if (!rawKey) {
     throw new Error(
       'No master key configured. Set ANYSSH_MASTER_KEY or ANYSSH_MASTER_KEY_FILE (generate one with `npm run gen-key`).',
@@ -60,12 +87,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     .map((o) => o.trim().replace(/\/$/, ''))
     .filter(Boolean);
 
+  const smtpHost = env.ANYSSH_SMTP_HOST;
+  const smtpPort = int(env.ANYSSH_SMTP_PORT, 587);
   return {
     host: env.ANYSSH_HOST ?? '127.0.0.1',
     port,
     dataDir,
     dbPath: env.ANYSSH_DB_PATH ?? path.join(dataDir, 'any-ssh.db'),
     masterKey: parseMasterKey(rawKey),
+    previousMasterKeys: rawPrevious
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean)
+      .map(parseMasterKey),
     allowedOrigins: origins,
     cookieSecure: bool(env.ANYSSH_COOKIE_SECURE, production),
     trustProxy: bool(env.ANYSSH_TRUST_PROXY, false),
@@ -76,5 +110,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowLoopbackTargets: bool(env.ANYSSH_ALLOW_LOOPBACK_TARGETS, false),
     webRoot: env.ANYSSH_WEB_ROOT === '' ? null : path.resolve(env.ANYSSH_WEB_ROOT ?? '../web/dist'),
     logLevel: env.ANYSSH_LOG_LEVEL ?? (production ? 'info' : 'debug'),
+    publicUrl: (env.ANYSSH_PUBLIC_URL ?? origins[0] ?? `http://localhost:${port}`).replace(/\/$/, ''),
+    smtp: smtpHost
+      ? {
+          host: smtpHost,
+          port: smtpPort,
+          secure: bool(env.ANYSSH_SMTP_SECURE, smtpPort === 465),
+          ...(env.ANYSSH_SMTP_USER ? { user: env.ANYSSH_SMTP_USER } : {}),
+          ...(smtpPass ? { pass: smtpPass } : {}),
+        }
+      : null,
+    mailFrom: env.ANYSSH_MAIL_FROM ?? 'Any-SSH <no-reply@localhost>',
   };
 }

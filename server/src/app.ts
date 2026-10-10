@@ -11,6 +11,9 @@ import type { Config } from './config.js';
 import { SecretBox, randomToken } from './crypto.js';
 import { openDatabase, type DB } from './db.js';
 import { HttpError, sessionToken } from './http.js';
+import { createMailer, type Mailer } from './mail.js';
+import { countStale } from './rotate.js';
+import { registerAccountRoutes } from './routes/account.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerServerRoutes } from './routes/servers.js';
@@ -30,12 +33,11 @@ export interface BuiltApp {
   setup: { token: string | null };
 }
 
-export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean } = {}): Promise<BuiltApp> {
+export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean; mailer?: Mailer } = {}): Promise<BuiltApp> {
   const db = opts.db ?? openDatabase(config.dbPath);
   const sessions = new SessionStore(db, config);
   const terminals = new TerminalRegistry();
   sessions.setRevokeListener((hashes) => terminals.closeForSessions(hashes, 'You were signed out.'));
-  const ctx: AppContext = { config, db, box: new SecretBox(config.masterKey), audit: new AuditLog(db), sessions, terminals };
 
   const userCount = (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
   const setup = { token: userCount === 0 ? randomToken(18) : null };
@@ -45,6 +47,17 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
     trustProxy: config.trustProxy,
     bodyLimit: 256 * 1024,
   });
+  const ctx: AppContext = {
+    config,
+    db,
+    box: new SecretBox(config.masterKey, config.previousMasterKeys),
+    audit: new AuditLog(db),
+    sessions,
+    terminals,
+    mailer: opts.mailer ?? createMailer(config, app.log),
+  };
+  const stale = countStale(db, ctx.box);
+  if (stale > 0) app.log.warn(`${stale} secret(s) are sealed with a retired master key. Run \`npm run rotate-keys\`.`);
   app.decorateRequest('auth', null);
 
   await app.register(cookie);
@@ -105,6 +118,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
 
   app.get('/api/health', async () => ({ ok: true }));
   registerAuthRoutes(app, ctx);
+  registerAccountRoutes(app, ctx);
   registerUserRoutes(app, ctx, setup);
   registerKeyRoutes(app, ctx);
   registerServerRoutes(app, ctx);

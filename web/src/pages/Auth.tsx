@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { post, type User } from '../api';
 import { Field, Form } from '../ui';
 
@@ -20,6 +20,7 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
 export function SetupPage({ onDone }: { onDone: () => void }) {
   const [setupToken, setToken] = useState('');
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   return (
@@ -31,7 +32,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
         submit="Create administrator"
         onSubmit={async () => {
           if (password !== confirm) throw new Error('Passwords do not match.');
-          await post('/api/setup', { setupToken, username, password });
+          await post('/api/setup', { setupToken, username, password, ...(email ? { email } : {}) });
           onDone();
         }}
       >
@@ -40,6 +41,9 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
         </Field>
         <Field label="Username">
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />
+        </Field>
+        <Field label="Email" hint="Optional. Used for password resets and security notices.">
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
         </Field>
         <Field label="Password" hint="At least 12 characters. A passphrase of several words works well.">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" required />
@@ -53,11 +57,13 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
 }
 
 export function LoginPage({ mfaPending, onLoggedIn }: { mfaPending: boolean; onLoggedIn: (u: User) => void }) {
-  const [stage, setStage] = useState<'password' | 'mfa'>(mfaPending ? 'mfa' : 'password');
+  const [stage, setStage] = useState<'password' | 'mfa' | 'forgot'>(mfaPending ? 'mfa' : 'password');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
+
+  if (stage === 'forgot') return <ForgotForm onBack={() => setStage('password')} />;
 
   if (stage === 'mfa') {
     return (
@@ -103,6 +109,97 @@ export function LoginPage({ mfaPending, onLoggedIn }: { mfaPending: boolean; onL
         </Field>
         <Field label="Password">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
+        </Field>
+      </Form>
+      <button className="link" onClick={() => setStage('forgot')}>
+        Forgot your password?
+      </button>
+    </Shell>
+  );
+}
+
+function ForgotForm({ onBack }: { onBack: () => void }) {
+  const [identifier, setIdentifier] = useState('');
+  const [sent, setSent] = useState(false);
+  return (
+    <Shell title="Reset your password">
+      {sent ? (
+        <p>If that account exists and has an email address, we’ve sent it a link to reset the password. The link expires in 30 minutes.</p>
+      ) : (
+        <Form
+          submit="Email me a reset link"
+          onSubmit={async () => {
+            await post('/api/auth/forgot', { identifier });
+            setSent(true);
+          }}
+        >
+          <Field label="Username or email">
+            <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} autoCapitalize="none" autoComplete="username" autoFocus required />
+          </Field>
+        </Form>
+      )}
+      <button className="link" onClick={onBack}>
+        Back to sign in
+      </button>
+    </Shell>
+  );
+}
+
+/** Landing page for emailed links: #/welcome?token=… (invite) and #/reset?token=… (reset). */
+export function TokenPage({ token, onDone }: { token: string; onDone: () => void }) {
+  const [info, setInfo] = useState<{ purpose: 'invite' | 'reset'; username: string; displayName: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    post<{ purpose: 'invite' | 'reset'; username: string; displayName: string }>('/api/auth/token/check', { token }).then(setInfo, (e) =>
+      setError(e instanceof Error ? e.message : String(e)),
+    );
+  }, [token]);
+
+  if (error) {
+    return (
+      <Shell title="Link not valid">
+        <p className="error">{error}</p>
+        <button className="link" onClick={onDone}>
+          Go to sign in
+        </button>
+      </Shell>
+    );
+  }
+  if (!info) return <div className="loading">Checking link…</div>;
+  if (done) {
+    return (
+      <Shell title="Password saved">
+        <p>You can now sign in as <strong>{info.username}</strong>.</p>
+        <button className="primary" onClick={onDone}>
+          Sign in
+        </button>
+      </Shell>
+    );
+  }
+  return (
+    <Shell title={info.purpose === 'invite' ? `Welcome, ${info.displayName}` : 'Choose a new password'}>
+      <p className="muted">
+        {info.purpose === 'invite' ? 'Set a password for your new account' : 'Set a new password for'} <strong>{info.username}</strong>.
+        {info.purpose === 'reset' && ' This signs you out on every device.'}
+      </p>
+      <Form
+        submit="Save password"
+        onSubmit={async () => {
+          if (password !== confirm) throw new Error('Passwords do not match.');
+          await post('/api/auth/token/complete', { token, newPassword: password });
+          setDone(true);
+        }}
+      >
+        <input type="text" value={info.username} autoComplete="username" readOnly hidden />
+        <Field label="New password" hint="At least 12 characters. A passphrase of several words works well.">
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" autoFocus required />
+        </Field>
+        <Field label="Confirm password">
+          <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required />
         </Field>
       </Form>
     </Shell>

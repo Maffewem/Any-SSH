@@ -2,6 +2,28 @@ import { useState } from 'react';
 import { del, formatTime, get, patch, post, type AuditEntry, type User } from '../api';
 import { Field, Form, Modal, SecretOnce, useAsync } from '../ui';
 
+interface LinkResult {
+  purpose: 'invite' | 'reset';
+  sent: boolean;
+  url?: string;
+  error?: string;
+}
+
+function LinkResultView({ result, email }: { result: LinkResult; email: string | null }) {
+  if (result.sent) {
+    return <p className="ok">{result.purpose === 'invite' ? 'An invite' : 'A password reset link'} was emailed to {email}.</p>;
+  }
+  return (
+    <div>
+      <p className="muted small">
+        {result.error ?? 'Email is not configured on this server, so nothing was sent.'} Give them this single-use link over a channel you
+        trust:
+      </p>
+      {result.url && <SecretOnce label="Link." value={result.url} />}
+    </div>
+  );
+}
+
 export function AdminUsersPage({ me }: { me: User }) {
   const { data, error, reload } = useAsync(() => get<{ users: User[] }>('/api/admin/users'), []);
   const [creating, setCreating] = useState(false);
@@ -63,18 +85,30 @@ export function AdminUsersPage({ me }: { me: User }) {
 function CreateUserDialog({ onClose }: { onClose: () => void }) {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
   const [role, setRole] = useState<'user' | 'admin'>('user');
-  const [created, setCreated] = useState<{ username: string; temporaryPassword: string } | null>(null);
+  const [created, setCreated] = useState<{ username: string; email: string | null; temporaryPassword?: string; invite?: LinkResult } | null>(null);
 
   return (
     <Modal title="Add user" onClose={onClose}>
       {created ? (
         <div>
-          <p>
-            <strong>@{created.username}</strong> was created. Send them this temporary password over a channel you trust; they must
-            replace it when they first sign in.
-          </p>
-          <SecretOnce label="Temporary password." value={created.temporaryPassword} />
+          {created.temporaryPassword ? (
+            <>
+              <p>
+                <strong>@{created.username}</strong> was created. Send them this temporary password over a channel you trust; they
+                must replace it when they first sign in.
+              </p>
+              <SecretOnce label="Temporary password." value={created.temporaryPassword} />
+            </>
+          ) : (
+            <>
+              <p>
+                <strong>@{created.username}</strong> was created.
+              </p>
+              {created.invite && <LinkResultView result={created.invite} email={created.email} />}
+            </>
+          )}
           <button className="primary" onClick={onClose}>
             Done
           </button>
@@ -83,12 +117,13 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
         <Form
           submit="Create user"
           onSubmit={async () => {
-            const res = await post<{ user: User; temporaryPassword: string }>('/api/admin/users', {
+            const res = await post<{ user: User; temporaryPassword?: string; invite?: LinkResult }>('/api/admin/users', {
               username,
               ...(displayName ? { displayName } : {}),
+              ...(email ? { email } : {}),
               role,
             });
-            setCreated({ username: res.user.username, temporaryPassword: res.temporaryPassword });
+            setCreated({ username: res.user.username, email: res.user.email, temporaryPassword: res.temporaryPassword, invite: res.invite });
           }}
         >
           <Field label="Username">
@@ -96,6 +131,9 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
           </Field>
           <Field label="Display name">
             <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          </Field>
+          <Field label="Email" hint="With an email, they get an invite link to set their own password. Without one, you get a temporary password to pass on.">
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </Field>
           <Field label="Role">
             <select value={role} onChange={(e) => setRole(e.target.value as 'user' | 'admin')}>
@@ -111,6 +149,8 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
 
 function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean; onClose: () => void }) {
   const [displayName, setDisplayName] = useState(user.displayName);
+  const [email, setEmail] = useState(user.email ?? '');
+  const [link, setLink] = useState<LinkResult | null>(null);
   const [role, setRole] = useState(user.role);
   const [status, setStatus] = useState(user.status);
   const [message, setMessage] = useState<string | null>(null);
@@ -133,12 +173,16 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
       <Form
         submit="Save"
         onSubmit={async () => {
-          await patch(`/api/admin/users/${user.id}`, isSelf ? { displayName } : { displayName, role, status });
+          const emailField = email.trim() !== (user.email ?? '') ? { email: email.trim() || null } : {};
+          await patch(`/api/admin/users/${user.id}`, isSelf ? { displayName, ...emailField } : { displayName, ...emailField, role, status });
           onClose();
         }}
       >
         <Field label="Display name">
           <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
+        </Field>
+        <Field label="Email">
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
         <Field label="Role" hint={isSelf ? 'You cannot change your own role.' : undefined}>
           <select value={role} disabled={isSelf} onChange={(e) => setRole(e.target.value as User['role'])}>
@@ -158,7 +202,19 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
           {message && <p className="ok">{message}</p>}
           {error && <p className="error">{error}</p>}
           {tempPassword && <SecretOnce label="New temporary password." value={tempPassword} />}
+          {link && <LinkResultView result={link} email={user.email} />}
           <div className="row wrap">
+            {user.email && user.status === 'active' && (
+              <button
+                onClick={() =>
+                  action(user.lastLoginAt ? 'Email a password reset link' : 'Resend the invite', async () => {
+                    setLink(await post<LinkResult>(`/api/admin/users/${user.id}/send-link`));
+                  })
+                }
+              >
+                {user.lastLoginAt ? 'Email reset link' : 'Resend invite'}
+              </button>
+            )}
             <button
               onClick={() =>
                 action('Reset password', async () => {

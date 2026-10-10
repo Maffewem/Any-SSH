@@ -8,20 +8,31 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEq
  * handing one user's secret to another.
  *
  * Format: "v1.<keyId>.<iv b64url>.<tag b64url>.<ciphertext b64url>"
- * keyId is a short fingerprint of the master key, so a future key-rotation tool can tell
- * which key sealed which value.
+ * keyId is a short fingerprint of the master key that sealed the value, which is how key
+ * rotation (src/rotate.ts) finds values still sealed with a retired key.
  */
 export class SecretBox {
   readonly keyId: string;
+  private readonly keys = new Map<string, Buffer>();
 
-  constructor(private readonly key: Buffer) {
+  /**
+   * @param key current master key, used for all new ciphertexts
+   * @param previousKeys retired keys, accepted for decryption only (during key rotation)
+   */
+  constructor(key: Buffer, previousKeys: Buffer[] = []) {
     if (key.length !== 32) throw new Error('SecretBox key must be 32 bytes');
-    this.keyId = createHash('sha256').update(key).digest('hex').slice(0, 8);
+    this.keyId = SecretBox.idOf(key);
+    this.keys.set(this.keyId, key);
+    for (const k of previousKeys) this.keys.set(SecretBox.idOf(k), k);
+  }
+
+  static idOf(key: Buffer): string {
+    return createHash('sha256').update(key).digest('hex').slice(0, 8);
   }
 
   seal(plaintext: string | Buffer, context: string): string {
     const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.key, iv);
+    const cipher = createCipheriv('aes-256-gcm', this.keys.get(this.keyId)!, iv);
     cipher.setAAD(Buffer.from(context, 'utf8'));
     const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     const tag = cipher.getAuthTag();
@@ -32,8 +43,9 @@ export class SecretBox {
     const parts = sealed.split('.');
     if (parts.length !== 5 || parts[0] !== 'v1') throw new Error('Unsupported secret format');
     const [, keyId, ivB64, tagB64, ctB64] = parts as [string, string, string, string, string];
-    if (keyId !== this.keyId) throw new Error('Secret was sealed with a different master key');
-    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(ivB64, 'base64url'));
+    const key = this.keys.get(keyId);
+    if (!key) throw new Error('Secret was sealed with a different master key');
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64url'));
     decipher.setAAD(Buffer.from(context, 'utf8'));
     decipher.setAuthTag(Buffer.from(tagB64, 'base64url'));
     return Buffer.concat([decipher.update(Buffer.from(ctB64, 'base64url')), decipher.final()]);
@@ -41,6 +53,16 @@ export class SecretBox {
 
   openString(sealed: string, context: string): string {
     return this.open(sealed, context).toString('utf8');
+  }
+
+  /** True when the ciphertext was sealed with a retired key and should be re-sealed. */
+  isStale(sealed: string): boolean {
+    return sealed.split('.')[1] !== this.keyId;
+  }
+
+  /** Re-encrypts under the current key (same context), or returns the input if already current. */
+  reseal(sealed: string, context: string): string {
+    return this.isStale(sealed) ? this.seal(this.open(sealed, context), context) : sealed;
   }
 }
 

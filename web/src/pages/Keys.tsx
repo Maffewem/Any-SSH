@@ -31,7 +31,7 @@ export function KeysPage() {
               <div>
                 <h3>{k.name}</h3>
                 <p className="muted small mono">
-                  {k.type} · {k.fingerprint} · added {formatTime(k.createdAt)}
+                  {k.type} · {k.fingerprint} · added {formatTime(k.createdAt)} · {k.lastUsedAt ? `last used ${formatTime(k.lastUsedAt)}` : 'never used'}
                 </p>
               </div>
               <div className="row">

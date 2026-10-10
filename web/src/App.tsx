@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { get, post, setUnauthenticatedHandler, type Server, type User } from './api';
 import { AccountPage } from './pages/Account';
 import { AdminUsersPage, AuditPage } from './pages/Admin';
-import { ForcePasswordChangePage, LoginPage, SetupPage } from './pages/Auth';
+import { ForcePasswordChangePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
 import { KeysPage } from './pages/Keys';
 import { ServersPage } from './pages/Servers';
 import { TerminalSession, type TerminalState } from './terminal/TerminalSession';
@@ -17,6 +17,12 @@ interface OpenTerminal {
   state: TerminalState;
 }
 
+/** Token from an emailed link (#/reset?token=… or #/welcome?token=…), if this is one. */
+function linkTokenFromHash(): string | null {
+  const m = /^#\/(reset|welcome)\?token=([A-Za-z0-9_-]{20,100})$/.exec(location.hash);
+  return m ? m[2]! : null;
+}
+
 function pageFromHash(): Page {
   const h = location.hash.replace(/^#\/?/, '');
   return (['servers', 'keys', 'account', 'users', 'audit'] as const).find((p) => p === h) ?? 'servers';
@@ -27,6 +33,7 @@ export function App() {
   const [page, setPage] = useState<Page>(pageFromHash);
   const [terminals, setTerminals] = useState<OpenTerminal[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
+  const [linkToken, setLinkToken] = useState<string | null>(linkTokenFromHash);
 
   const refresh = useCallback(async () => {
     const setup = await get<{ needed: boolean }>('/api/setup');
@@ -47,6 +54,7 @@ export function App() {
       setBoot({ kind: 'login', mfaPending: false });
     });
     const onHash = () => {
+      setLinkToken(linkTokenFromHash());
       setPage(pageFromHash());
       setActiveTab(null);
     };
@@ -61,6 +69,20 @@ export function App() {
     setBoot({ kind: 'login', mfaPending: false });
   };
 
+  if (linkToken) {
+    return (
+      <TokenPage
+        token={linkToken}
+        onDone={() => {
+          // Drop the token from the address bar and history.
+          history.replaceState(null, '', '/');
+          setLinkToken(null);
+          void post('/api/auth/logout').catch(() => {});
+          setBoot({ kind: 'login', mfaPending: false });
+        }}
+      />
+    );
+  }
   if (boot.kind === 'loading') return <div className="loading">Loading…</div>;
   if (boot.kind === 'setup') return <SetupPage onDone={() => setBoot({ kind: 'login', mfaPending: false })} />;
   if (boot.kind === 'login') return <LoginPage mfaPending={boot.mfaPending} onLoggedIn={(user) => setBoot({ kind: 'app', user })} />;

@@ -129,8 +129,13 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
 
   // 3. Credentials. They are decrypted only here, in memory, for the duration of the handshake.
   let creds: Pick<ConnectConfig, 'privateKey' | 'passphrase' | 'password'>;
+  // Which key was used is recorded with the session, so every use of a stored key is attributable.
+  let credentialFingerprint: string | null = null;
   try {
     creds = await loadCredentials(ctx, server, (prompt) => ask('password', prompt));
+    credentialFingerprint = server.auth_method === 'key'
+      ? ((db.prepare('SELECT fingerprint FROM ssh_keys WHERE id = ?').get(server.key_id) as { fingerprint: string } | undefined)?.fingerprint ?? null)
+      : null;
   } catch (err) {
     return closeWithError(err);
   }
@@ -191,7 +196,12 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
   // 5. Connect and open an interactive shell.
   conn.on('ready', () => {
     connected = true;
-    audit.record({ ...auditBase, action: 'ssh.session_start', details: { host: server.host, port: server.port, username: server.username, access } });
+    if (server.auth_method === 'key') db.prepare('UPDATE ssh_keys SET last_used_at = ? WHERE id = ?').run(Date.now(), server.key_id);
+    audit.record({
+      ...auditBase,
+      action: 'ssh.session_start',
+      details: { host: server.host, port: server.port, username: server.username, access, authMethod: server.auth_method, keyFingerprint: credentialFingerprint },
+    });
     send({ type: 'status', message: 'Connected' });
     conn.shell({ term: 'xterm-256color', cols, rows }, (err, stream) => {
       if (err) return closeWithError(err);

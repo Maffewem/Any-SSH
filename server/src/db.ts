@@ -110,6 +110,22 @@ const MIGRATIONS: string[] = [
   CREATE TRIGGER audit_log_no_delete BEFORE DELETE ON audit_log
     BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
   `,
+  `
+  ALTER TABLE users ADD COLUMN email TEXT;
+  ALTER TABLE ssh_keys ADD COLUMN last_used_at INTEGER;
+  CREATE UNIQUE INDEX users_email ON users(email COLLATE NOCASE) WHERE email IS NOT NULL;
+
+  -- Single-use links sent by email (invites, password resets). Only the SHA-256 is stored.
+  CREATE TABLE auth_tokens (
+    token_hash  TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose     TEXT NOT NULL CHECK (purpose IN ('invite', 'reset')),
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,
+    used_at     INTEGER
+  );
+  CREATE INDEX auth_tokens_user ON auth_tokens(user_id);
+  `,
 ];
 
 export function openDatabase(file: string): DB {

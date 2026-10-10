@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { notify } from '../accountTokens.js';
 import { sha256 } from '../crypto.js';
 import {
   HttpError,
@@ -194,6 +195,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     sessions.destroyByHash(session.id_hash);
     setSessionCookie(ctx, reply, sessions.create(user.id, 'full', clientIp(req), req.headers['user-agent'] ?? null));
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.password_change', ip: clientIp(req) });
+    notify(ctx, req.log, user, 'your password was changed');
     return { user: publicUser(getUser(user.id)) };
   });
 
@@ -246,6 +248,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     db.prepare('UPDATE users SET totp_enabled = 1, updated_at = ? WHERE id = ?').run(Date.now(), user.id);
     const recoveryCodes = issueRecoveryCodes(user.id);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.mfa_enable', ip: clientIp(req) });
+    notify(ctx, req.log, user, 'two-factor authentication was turned on');
     return { recoveryCodes };
   });
 
@@ -262,6 +265,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     ).run(Date.now(), user.id);
     db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').run(user.id);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.mfa_disable', ip: clientIp(req) });
+    notify(ctx, req.log, user, 'two-factor authentication was turned off');
     return { ok: true };
   });
 
@@ -274,6 +278,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     }
     const recoveryCodes = issueRecoveryCodes(user.id);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.recovery_codes_regenerate', ip: clientIp(req) });
+    notify(ctx, req.log, user, 'new two-factor recovery codes were generated (the old ones no longer work)');
     return { recoveryCodes };
   });
 }

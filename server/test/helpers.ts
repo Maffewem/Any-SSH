@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { buildApp, CSRF_HEADER, type BuiltApp } from '../src/app.js';
 import { loadConfig, type Config } from '../src/config.js';
 import { openDatabase } from '../src/db.js';
+import { MemoryMailer } from '../src/mail.js';
 
 export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -11,9 +12,18 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-export async function makeApp(overrides: Partial<Config> = {}): Promise<BuiltApp> {
+export async function makeApp(overrides: Partial<Config> = {}): Promise<BuiltApp & { mail: MemoryMailer }> {
   const config = testConfig(overrides);
-  return buildApp(config, { db: openDatabase(':memory:'), logger: false });
+  const mail = new MemoryMailer();
+  return { ...(await buildApp(config, { db: openDatabase(':memory:'), logger: false, mailer: mail })), mail };
+}
+
+/** Pulls the token out of the link in the most recent email to `to`. */
+export function lastLinkToken(mail: MemoryMailer, to: string): string {
+  const msg = [...mail.sent].reverse().find((m) => m.to === to);
+  const match = msg && /token=([A-Za-z0-9_-]+)/.exec(msg.text);
+  if (!match) throw new Error(`no link emailed to ${to}`);
+  return match[1]!;
 }
 
 export const ADMIN_PASSWORD = 'correct horse battery staple';

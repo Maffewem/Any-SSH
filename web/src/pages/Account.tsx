@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
 import { useState } from 'react';
-import { del, formatTime, get, post, type User } from '../api';
+import { del, formatTime, get, patch, post, type User } from '../api';
 import { Field, Form, SecretOnce, useAsync } from '../ui';
 import { ChangePasswordForm } from './Auth';
 
@@ -20,9 +20,10 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
       <h1>Account</h1>
       <div className="card">
         <h2>Profile</h2>
-        <p>
-          {user.displayName} <span className="muted">@{user.username}</span> · {user.role === 'admin' ? 'Administrator' : 'User'}
+        <p className="muted">
+          @{user.username} · {user.role === 'admin' ? 'Administrator' : 'User'}
         </p>
+        <ProfileForm user={user} onUserChange={onUserChange} />
       </div>
       <div className="card">
         <h2>Two-factor authentication</h2>
@@ -38,6 +39,42 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
         <Sessions />
       </div>
     </section>
+  );
+}
+
+function ProfileForm({ user, onUserChange }: { user: User; onUserChange: (u: User) => void }) {
+  const [displayName, setDisplayName] = useState(user.displayName);
+  const [email, setEmail] = useState(user.email ?? '');
+  const [password, setPassword] = useState('');
+  const [saved, setSaved] = useState(false);
+  const emailChanging = email.trim().toLowerCase() !== (user.email ?? '').toLowerCase();
+  return (
+    <Form
+      submit="Save profile"
+      onSubmit={async () => {
+        setSaved(false);
+        const res = await patch<{ user: User }>('/api/auth/profile', {
+          displayName,
+          ...(emailChanging ? { email: email.trim() || null, password } : {}),
+        });
+        setPassword('');
+        setSaved(true);
+        onUserChange(res.user);
+      }}
+    >
+      <Field label="Display name">
+        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
+      </Field>
+      <Field label="Email" hint="Used for password reset links and security notices.">
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+      </Field>
+      {emailChanging && (
+        <Field label="Current password" hint="Needed to change where reset links are sent.">
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
+        </Field>
+      )}
+      {saved && <p className="ok">Saved.</p>}
+    </Form>
   );
 }
 

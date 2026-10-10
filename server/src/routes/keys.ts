@@ -35,10 +35,31 @@ function generateKeyPair(type: 'ed25519' | 'ecdsa' | 'rsa'): Promise<{ private: 
   });
 }
 
+/** Rejects key types and sizes that are no longer considered safe. */
+export function keyWeakness(type: string, publicBlob: Buffer): string | null {
+  if (type === 'ssh-dss') return 'DSA keys are no longer secure. Use an Ed25519 key instead.';
+  if (type === 'ssh-rsa') {
+    // Public blob: string "ssh-rsa", mpint e, mpint n. Modulus size = length of n without its sign byte.
+    let off = 0;
+    const read = () => {
+      const len = publicBlob.readUInt32BE(off);
+      const v = publicBlob.subarray(off + 4, off + 4 + len);
+      off += 4 + len;
+      return v;
+    };
+    read();
+    read();
+    const n = read();
+    const bits = (n[0] === 0 ? n.length - 1 : n.length) * 8;
+    if (bits < 2048) return `This RSA key is only ${bits} bits. Use at least 2048 bits, or better, Ed25519.`;
+  }
+  return null;
+}
+
 export const keyContext = (keyId: string) => `ssh_key:${keyId}:private`;
 
 export function publicKeyView(k: SshKeyRow) {
-  return { id: k.id, name: k.name, type: k.key_type, publicKey: k.public_key, fingerprint: k.fingerprint, createdAt: k.created_at };
+  return { id: k.id, name: k.name, type: k.key_type, publicKey: k.public_key, fingerprint: k.fingerprint, createdAt: k.created_at, lastUsedAt: k.last_used_at };
 }
 
 export function registerKeyRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -50,6 +71,8 @@ export function registerKeyRoutes(app: FastifyInstance, ctx: AppContext): void {
     const key = Array.isArray(parsed) ? parsed[0] : parsed;
     if (!key || !key.isPrivateKey()) throw badRequest('That is a public key. Paste the private key instead.');
     const blob = key.getPublicSSH();
+    const weakness = keyWeakness(key.type, blob);
+    if (weakness) throw badRequest(weakness);
     const id = randomUUID();
     const row: SshKeyRow = {
       id,
@@ -60,6 +83,7 @@ export function registerKeyRoutes(app: FastifyInstance, ctx: AppContext): void {
       fingerprint: sshFingerprint(blob),
       private_key_enc: box.seal(JSON.stringify(secret), keyContext(id)),
       created_at: Date.now(),
+      last_used_at: null,
     };
     db.prepare(
       `INSERT INTO ssh_keys (id, owner_id, name, key_type, public_key, fingerprint, private_key_enc, created_at)

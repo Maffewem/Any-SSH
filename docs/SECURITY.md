@@ -38,7 +38,11 @@ wrappers can come later.
 | Session fixation | A new token is issued after the password step, after MFA, and after a password change. |
 | Revocation | Users can see and sign out their devices. Password change signs out all other sessions. Disabling, demoting, resetting or deleting a user ends their sessions and closes their live terminals immediately. |
 | First run | No default credentials. On an empty database the server prints a one-time setup token to its console; it is required to create the first administrator and is discarded afterwards. |
-| Admin-created accounts | Get a random 20-character temporary password shown once to the admin; the user must change it before doing anything else. |
+| Admin-created accounts | With an email address: an invite link (72 h, single use) lets them choose their own password; until then the account has an unusable random password. Without one: a random 20-character temporary password shown once to the admin, which must be changed at first sign-in. |
+| Password reset | "Forgot password" takes a username or email and always gives the same answer, so it cannot be used to discover accounts. If the account has an email, it gets a single-use link valid for 30 minutes; a new link revokes the previous one, and repeat requests within 2 minutes are ignored (5 requests/min/IP). Completing a reset signs out every session and closes open terminals. **It does not bypass 2FA**: the next sign-in still asks for a code. Admins can email a reset link (or re-send an invite) from the user's page. |
+| Link tokens | 256-bit random, stored only as SHA-256, carried in the URL fragment (`#/reset?token=…`) so they never reach server logs, proxies or `Referer` headers, and removed from the address bar once used. |
+| Security notices | Users get an email when their password is changed or reset, 2FA is turned on or off, recovery codes are regenerated, or their email address changes (sent to the *old* address). |
+| Email address changes | Need the current password, and cancel any pending reset links, so a hijacked session cannot quietly redirect resets to an attacker's mailbox. |
 
 ## Authorisation model
 
@@ -71,8 +75,25 @@ rotation.
   stored with that passphrase (both sealed), so they can be used without prompting.
 - Decrypted secrets exist only in memory for the duration of an SSH handshake.
 
+- **Key rotation.** Generate a new key, start the server with `ANYSSH_MASTER_KEY=<new>` and
+  `ANYSSH_PREVIOUS_MASTER_KEYS=<old>`, then run `npm run rotate-keys`. Every sealed value is re-encrypted under the new key
+  (safe while the server is running), the run is audited, and the server warns at startup while anything still uses a
+  retired key. Then drop the old key.
+- Key material (and the SMTP password) is removed from `process.env` as soon as it is read, so child processes never
+  inherit it. `ANYSSH_MASTER_KEY_FILE` (e.g. a Docker/Kubernetes secret) is preferred over the environment variable.
+- **Weak keys are refused on import:** DSA, and RSA below 2048 bits. Generated keys are Ed25519 by default.
+- **Every use of a stored key is attributable:** the SSH session audit entry records which key (by fingerprint) and
+  auth method were used, and each key shows when it was last used, so unexpected use stands out.
+
 **Keep the master key out of the database backup.** A stolen database without the key yields no usable secrets; the two
 together yield everything.
+
+## Email
+
+Outgoing mail uses SMTP configured with `ANYSSH_SMTP_*` variables. TLS is mandatory: implicit TLS on port 465, otherwise
+STARTTLS is required and the connection fails rather than sending a reset link in clear text (TLS 1.2+). Messages are plain
+text only. Without SMTP configured, emails are written to the server log (for development), and admins are shown invite
+and reset links directly so they can pass them on.
 
 ## Terminal connections
 
@@ -132,7 +153,9 @@ These are intentionally out of scope for this first pass:
   iPhone and Mac would be a natural fit).
 - **SSO** (OIDC / SAML) for organisations.
 - **Groups / teams** for sharing with many people at once.
-- **Master key rotation tool** and optional KMS/HSM-backed envelope encryption.
+- Optional KMS/HSM-backed envelope encryption, so the master key never sits on the Any-SSH host at all.
+- Per-user key encryption (unlocking keys with the user's own passphrase or passkey), which would protect keys even from
+  someone holding the master key, at the cost of sharing without disclosure.
 - **SSH certificates** (short-lived user certs signed by an Any-SSH CA) instead of long-lived keys.
 - **Jump hosts / bastions**, SFTP file transfer, port forwarding, agent forwarding (deliberately off).
 - **Session recording** for compliance (opt-in, per server).
