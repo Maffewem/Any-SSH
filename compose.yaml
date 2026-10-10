@@ -1,15 +1,23 @@
-# Single-host production deployment: Any-SSH behind Caddy (automatic HTTPS).
-# See docs/DEPLOY.md. Before first start:
-#   mkdir -p secrets && openssl rand -base64 32 > secrets/master_key && chmod 600 secrets/master_key
-#   cp .env.example .env   # set ANYSSH_DOMAIN, ANYSSH_ORIGIN and SMTP settings
+# Single-host production deployment: Any-SSH behind Caddy (automatic HTTPS), using the prebuilt image.
+# The easy way to set this up is deploy/install.sh (see docs/DEPLOY.md). By hand, before first start:
+#   mkdir -p secrets && openssl rand -base64 32 > secrets/master_key
+#   sudo chown 1000:1000 secrets/master_key && chmod 600 secrets/master_key
+#   create .env with ANYSSH_DOMAIN, ANYSSH_ORIGIN and optional SMTP settings
+# To build the image from this checkout instead: docker compose -f compose.yaml -f compose.build.yaml up -d --build
+# Local changes belong in compose.override.yaml, which Compose merges automatically.
+name: any-ssh
+
 services:
   app:
-    build: .
-    image: any-ssh:latest
+    image: ghcr.io/maffewem/any-ssh:${ANYSSH_VERSION:-latest}
     restart: unless-stopped
     env_file: .env
     environment:
+      # These describe the container and always win over .env.
       ANYSSH_MASTER_KEY_FILE: /run/secrets/master_key
+      ANYSSH_HOST: 0.0.0.0
+      ANYSSH_PORT: "8080"
+      ANYSSH_DATA_DIR: /data
     secrets:
       - master_key
     volumes:
@@ -35,6 +43,7 @@ services:
       - "443:443/udp"
     environment:
       ANYSSH_DOMAIN: ${ANYSSH_DOMAIN:?Set ANYSSH_DOMAIN in .env}
+      ANYSSH_ACME_EMAIL: ${ANYSSH_ACME_EMAIL:-}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

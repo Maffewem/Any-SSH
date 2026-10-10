@@ -18,41 +18,74 @@ Where to run it:
 
 ## First deployment
 
-On the VM (Docker and the Compose plugin installed, DNS for your domain pointing at it, ports 80 and 443 open):
+Point a domain (e.g. `ssh.example.com`) at the server, open ports 80 and 443, then run this on it:
 
 ```bash
-git clone https://github.com/Maffewem/Any-SSH.git && cd Any-SSH
-
-# 1. Master key: a file only the container user (uid 1000) can read. Back it up somewhere safe and separate.
-mkdir -p secrets
-openssl rand -base64 32 > secrets/master_key
-sudo chown 1000:1000 secrets/master_key && chmod 600 secrets/master_key
-
-# 2. Settings
-cp .env.example .env
-#   ANYSSH_DOMAIN=ssh.example.com
-#   ANYSSH_ORIGIN=https://ssh.example.com
-#   ANYSSH_SMTP_* for invites and password resets
-#   Leave ANYSSH_MASTER_KEY empty: compose passes the key as a file.
-
-# 3. Start
-docker compose up -d --build
-docker compose logs app | grep -A2 "first-run"   # one-time setup token
+curl -fsSL https://raw.githubusercontent.com/Maffewem/Any-SSH/main/deploy/install.sh | sudo bash
 ```
 
-Open `https://your-domain/`, paste the setup token, create the admin account, then turn on 2FA for it.
+It asks for the domain, your email (for certificate notices) and, optionally, SMTP settings for invite and reset emails.
+Then it:
 
-What the compose file sets up:
+1. installs Docker if it isn't there,
+2. puts everything in `/opt/any-ssh`: `compose.yaml`, the Caddy config, `.env` with your settings, and a newly generated
+   master key in `secrets/master_key` (readable only by the app),
+3. schedules a nightly backup (systemd timer),
+4. downloads the prebuilt image and starts Any-SSH behind Caddy,
+5. prints the one-time setup token for creating your admin account.
+
+Open `https://your-domain/`, paste the token, create the admin account, then turn on 2FA for it. Copy the master key
+(`sudo cat /opt/any-ssh/secrets/master_key`) into your password manager.
+
+To read the script before running it, download it first: `curl -fsSLO …/deploy/install.sh && less install.sh`. It also
+runs unattended: `sudo ANYSSH_DOMAIN=ssh.example.com ANYSSH_EMAIL=you@example.com bash install.sh`. Running it again keeps
+the existing key and settings.
+
+### Day-to-day
+
+The installer adds an `any-ssh` command:
+
+| Command | What it does |
+| --- | --- |
+| `sudo any-ssh update` | Backs up, downloads the latest version and restarts. Open terminals drop and users reconnect, so pick a quiet time. |
+| `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). |
+| `sudo any-ssh config` | Edits the settings, e.g. to add SMTP later, and applies them. |
+| `any-ssh status`, `any-ssh logs`, `any-ssh version` | Health, logs and the running version. |
+
+`update` replaces `compose.yaml`; put your own Compose changes in `/opt/any-ssh/compose.override.yaml`. To stay on a
+release instead of the newest build, set `ANYSSH_VERSION` in `.env` to a version tag such as `1.2` (see below).
+
+### Images
+
+Every push to `main` that passes CI publishes `ghcr.io/maffewem/any-ssh:latest` (and `:sha-<commit>`) for Intel/AMD and
+ARM servers. Tagging a release `v1.2.3` also publishes `:1.2.3` and `:1.2`. The server never builds anything.
+
+To build from source instead, clone the repository and run
+`docker compose -f compose.yaml -f compose.build.yaml up -d --build`.
+
+### What the setup gives you
 
 - **TLS:** Caddy gets and renews a Let's Encrypt certificate and proxies WebSockets. The app is not published on any
   host port, so the only way in is through Caddy.
 - **Container hardening:** the app runs as an unprivileged user with a read-only root filesystem, no Linux capabilities and
   `no-new-privileges`. It can write only to the `/data` volume.
 - **Secrets:** the master key is mounted as a Docker secret file, not an environment variable, and is never written to
-  the data volume.
+  the data volume. `.env` (which holds the SMTP password, if any) is readable only by root.
 
-To upgrade: `git pull && docker compose up -d --build`. Open terminals drop when the container restarts, so deploy at a
-quiet time. Users only need to reconnect.
+### Without the installer
+
+The same setup by hand, from a clone of the repository:
+
+```bash
+mkdir -p secrets
+openssl rand -base64 32 > secrets/master_key
+sudo chown 1000:1000 secrets/master_key && chmod 600 secrets/master_key
+cp .env.example .env     # set ANYSSH_DOMAIN, ANYSSH_ORIGIN and SMTP; leave ANYSSH_MASTER_KEY empty
+docker compose up -d
+docker compose logs app | grep -A2 "first-run"   # one-time setup token
+```
+
+Update with `docker compose pull && docker compose up -d`.
 
 ## Where the master key lives
 
@@ -70,22 +103,20 @@ Rules:
 - **Lose the key and the stored SSH keys, passwords and 2FA seeds are gone.** Users would have to re-import keys and
   re-enrol 2FA, so keep two separate copies.
 - **Rotate the key** if it may have been exposed, or on a schedule. See the README for the steps;
-  `docker compose exec app npm run rotate-keys` runs the rotation inside the container.
+  `docker compose exec app npm run rotate-keys` (from `/opt/any-ssh`) runs the rotation inside the container.
 
 ## Backups
 
-Everything except the master key is in one SQLite database on the `any-ssh-data` volume.
+Everything except the master key is in one SQLite database on the `any-ssh-data` volume. The installer backs it up
+nightly to `/opt/any-ssh/backups`; `sudo any-ssh backup` does it on demand. Backups are consistent even while people
+are using Any-SSH.
 
-```bash
-# Consistent online backup (safe while running); written to /data/backups inside the volume
-docker compose exec app npm run backup
+Ship those files offsite too (S3/B2 with versioning, or `restic`), and never alongside the master key. Test a restore now
+and then: stop the stack (`any-ssh stop`), copy the backup into the volume as `/data/any-ssh.db`, start it again, and sign
+in.
 
-# Copy it off the host
-docker compose cp app:/data/backups ./backups
-```
-
-Run it from cron (for example nightly) and ship the files offsite (S3/B2 with versioning, or `restic`). Test a restore
-now and then: stop the stack, put the backup in place as `/data/any-ssh.db` on the volume, start it again, and sign in.
+Without the installer: `docker compose exec app npm run backup` writes to `/data/backups` inside the volume, and
+`docker compose cp app:/data/backups ./backups` copies them out.
 
 For continuous backup with point-in-time restore, add [Litestream](https://litestream.io) as a sidecar that streams the
 SQLite WAL to object storage. That is the cheapest way to keep data loss to seconds without moving off SQLite.
