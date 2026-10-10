@@ -139,10 +139,6 @@ main() {
         fi
       } >"$dir/.env"
     )
-
-    if ! getent ahosts "$domain" >/dev/null 2>&1; then
-      warn "$domain doesn't resolve yet. Point its DNS at this server; HTTPS starts working once it does."
-    fi
   else
     say "Keeping the existing settings in $dir/.env"
   fi
@@ -183,16 +179,39 @@ UNIT
     return
   fi
 
+  # ---- DNS: HTTPS needs the domain to point at this server from the internet ----
+  local domain_now dns_ok=1
+  domain_now="$(sed -n 's/^ANYSSH_DOMAIN=//p' "$dir/.env")"
+  say "Checking DNS for $domain_now"
+  ANYSSH_DIR="$dir" /usr/local/bin/any-ssh check-dns "$domain_now" || dns_ok=0
+  if [ "$dns_ok" = 0 ]; then
+    echo
+    warn "HTTPS won't work until the problem above is fixed. Any-SSH will start anyway; once it's fixed, run"
+    warn "'sudo any-ssh restart', and 'sudo any-ssh doctor' to check."
+  fi
+
   # ---- Start ----
   say "Downloading and starting Any-SSH"
   ANYSSH_DIR="$dir" /usr/local/bin/any-ssh start
 
-  local domain_now
-  domain_now="$(sed -n 's/^ANYSSH_DOMAIN=//p' "$dir/.env")"
+  local https_ok=0
+  if [ "$dns_ok" = 1 ]; then
+    say "Waiting for the HTTPS certificate"
+    if ANYSSH_DIR="$dir" /usr/local/bin/any-ssh wait-cert; then
+      https_ok=1
+    else
+      ANYSSH_DIR="$dir" /usr/local/bin/any-ssh doctor || true
+    fi
+  fi
+
   echo
-  say "Any-SSH is running."
+  if [ "$https_ok" = 1 ]; then
+    say "Any-SSH is running."
+  else
+    say "Any-SSH is running, but HTTPS isn't ready yet (see above). Run 'sudo any-ssh doctor' to check again."
+  fi
   echo
-  echo "  1. Open https://$domain_now/"
+  echo "  1. Open https://$domain_now/ (the domain, not the IP address)"
   local token
   token="$(ANYSSH_DIR="$dir" /usr/local/bin/any-ssh setup-token 2>/dev/null || true)"
   if [ -n "$token" ]; then

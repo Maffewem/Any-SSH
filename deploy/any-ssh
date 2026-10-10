@@ -21,7 +21,8 @@ Usage: any-ssh <command>
   config        Edit the settings (.env), then apply them
   start         Start it
   stop          Stop it
-  restart       Restart it
+  restart       Restart it (including the HTTPS proxy, which retries the certificate)
+  doctor        Check the domain, DNS and HTTPS certificate, and explain what's wrong
   setup-token   Show the one-time token for creating the first admin
   version       Show the running version
 
@@ -48,6 +49,78 @@ wait_healthy() {
   done
   dc logs --tail 30 app >&2 || true
   die "Any-SSH did not become healthy (last status: ${status:-not running}). The logs above should say why."
+}
+
+domain() { sed -n "s/^ANYSSH_DOMAIN=//p" "$DIR/.env" | tr -d "'\"" | tail -n 1; }
+
+# Public view of the domain (what Let's Encrypt and phones outside your network see), via DNS-over-HTTPS.
+# Prints the A records, "none" when the name doesn't exist publicly, or nothing when the lookup itself failed.
+public_a() {
+  local url json
+  for url in ${ANYSSH_DOH_URL:-https://cloudflare-dns.com/dns-query https://dns.google/resolve}; do
+    json="$(curl -fsS --max-time 10 -H 'accept: application/dns-json' "$url?name=$1&type=A" 2>/dev/null)" || continue
+    [[ "$json" == *'"Status"'* ]] || continue
+    { grep -oE '"data": *"[0-9]+(\.[0-9]+){3}"' <<<"$json" || true; } | grep -oE '[0-9]+(\.[0-9]+){3}' |
+      sort -u | paste -sd' ' - | grep . || echo none
+    return
+  done
+}
+public_ip() { curl -4fsS --max-time 10 "${ANYSSH_IP_URL:-https://api.ipify.org}" 2>/dev/null || true; }
+local_a() { getent ahostsv4 "$1" 2>/dev/null | awk '{print $1}' | sort -u | paste -sd' ' -; }
+
+# Exit status 0 when DNS looks right. Prints what it found and what to do about it.
+check_dns() {
+  local d="$1" pub ip loc ok=0
+  pub="$(public_a "$d" || true)"; ip="$(public_ip)"; loc="$(local_a "$d" || true)"
+  printf '  %-26s %s\n' "Domain:" "$d"
+  printf '  %-26s %s\n' "Public DNS (A record):" "${pub:-unknown (no public DNS resolver reachable)}"
+  printf '  %-26s %s\n' "This server's public IP:" "${ip:-unknown}"
+  [ -z "$loc" ] || [ -z "$pub" ] || [ "$loc" = "$pub" ] || printf '  %-26s %s\n' "Resolves on this network:" "$loc"
+  if [ "$pub" = none ]; then
+    ok=1
+    echo
+    echo "  $d has no public DNS record, so no certificate can be issued and browsers can't reach it from outside."
+    local target="${ip:-the public IP address of this server}"
+    echo "  Add an A record for it pointing at $target with your DNS provider."
+  elif [ -n "$pub" ] && [ -n "$ip" ] && [[ " $pub " != *" $ip "* ]]; then
+    ok=1
+    echo
+    echo "  $d points at $pub, but this server's public IP is $ip. Update the A record to $ip."
+    echo "  (If the domain is on Cloudflare with the orange-cloud proxy on, set it to 'DNS only' instead.)"
+  fi
+  if [ -n "$ip" ] && ! ip -4 addr 2>/dev/null | grep -q "inet $ip/"; then
+    echo
+    echo "  This server is behind a router (NAT). If you haven't already, forward TCP ports 80 and 443 on the router to"
+    echo "  this server ($(hostname -I 2>/dev/null | awk '{print $1}')). Without that, HTTPS can't be set up and the site isn't reachable from outside."
+  fi
+  return "$ok"
+}
+
+# Exit status 0 when Caddy is serving a certificate for the domain.
+cert_ok() {
+  echo | openssl s_client -connect 127.0.0.1:443 -servername "$1" 2>/dev/null | openssl x509 -noout >/dev/null 2>&1
+}
+cert_error() {
+  dc logs --no-log-prefix caddy 2>/dev/null | grep '"could not get certificate' | tail -n 1 |
+    sed -n 's/.*"error":"\([^"]*\)".*/\1/p'
+}
+
+doctor() {
+  local d status=0 err
+  d="$(domain)"
+  [ -n "$d" ] || die "ANYSSH_DOMAIN isn't set in $DIR/.env."
+  check_dns "$d" || status=1
+  echo
+  if cert_ok "$d"; then
+    printf '  %-26s %s\n' "HTTPS certificate:" "OK"
+  else
+    status=1
+    printf '  %-26s %s\n' "HTTPS certificate:" "not issued yet"
+    err="$(cert_error || true)"
+    [ -z "$err" ] || echo "  Last attempt failed with: $err"
+    echo "  After fixing DNS or ports, run 'sudo any-ssh restart' to try again straight away."
+  fi
+  return "$status"
 }
 
 running() { [ -n "$(dc ps -q --status running app 2>/dev/null || true)" ]; }
@@ -81,7 +154,7 @@ case "${1:-help}" in
   restart)
     need_root restart
     dc up -d
-    dc restart app
+    dc restart
     wait_healthy
     say "Restarted"
     ;;
@@ -106,6 +179,13 @@ case "${1:-help}" in
     ;;
   backup) need_root backup; backup ;;
   status) dc ps ;;
+  doctor) doctor ;;
+  check-dns) check_dns "${2:-$(domain)}" ;;
+  wait-cert)
+    # Used by the installer: wait for the first certificate, then report.
+    for _ in $(seq 1 "${2:-45}"); do cert_ok "$(domain)" && exit 0; sleep 2; done
+    exit 1
+    ;;
   logs) dc logs -f --tail 100 ;;
   config)
     need_root config
