@@ -1,0 +1,135 @@
+import Database from 'better-sqlite3';
+import { chmodSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+
+export type DB = Database.Database;
+
+/**
+ * Forward-only migrations. Each entry runs once, in order, inside a transaction;
+ * the applied count is tracked with SQLite's user_version pragma.
+ */
+const MIGRATIONS: string[] = [
+  `
+  CREATE TABLE users (
+    id                    TEXT PRIMARY KEY,
+    username              TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    display_name          TEXT NOT NULL,
+    password_hash         TEXT NOT NULL,
+    role                  TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+    status                TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    must_change_password  INTEGER NOT NULL DEFAULT 0,
+    totp_secret_enc       TEXT,
+    totp_enabled          INTEGER NOT NULL DEFAULT 0,
+    totp_last_counter     INTEGER,
+    failed_logins         INTEGER NOT NULL DEFAULT 0,
+    locked_until          INTEGER,
+    last_login_at         INTEGER,
+    password_changed_at   INTEGER NOT NULL,
+    created_at            INTEGER NOT NULL,
+    updated_at            INTEGER NOT NULL
+  );
+
+  CREATE TABLE recovery_codes (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash  TEXT NOT NULL,
+    used_at    INTEGER
+  );
+  CREATE INDEX recovery_codes_user ON recovery_codes(user_id);
+
+  -- Session ids are never stored; only their SHA-256 hash.
+  CREATE TABLE sessions (
+    id_hash       TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    stage         TEXT NOT NULL CHECK (stage IN ('mfa', 'full')),
+    created_at    INTEGER NOT NULL,
+    last_seen_at  INTEGER NOT NULL,
+    expires_at    INTEGER NOT NULL,
+    ip            TEXT,
+    user_agent    TEXT
+  );
+  CREATE INDEX sessions_user ON sessions(user_id);
+
+  CREATE TABLE ssh_keys (
+    id               TEXT PRIMARY KEY,
+    owner_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name             TEXT NOT NULL,
+    key_type         TEXT NOT NULL,
+    public_key       TEXT NOT NULL,
+    fingerprint      TEXT NOT NULL,
+    private_key_enc  TEXT NOT NULL,
+    created_at       INTEGER NOT NULL
+  );
+  CREATE INDEX ssh_keys_owner ON ssh_keys(owner_id);
+
+  CREATE TABLE servers (
+    id                    TEXT PRIMARY KEY,
+    owner_id              TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name                  TEXT NOT NULL,
+    host                  TEXT NOT NULL,
+    port                  INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+    username              TEXT NOT NULL,
+    auth_method           TEXT NOT NULL CHECK (auth_method IN ('key', 'password', 'prompt')),
+    key_id                TEXT REFERENCES ssh_keys(id) ON DELETE SET NULL,
+    password_enc          TEXT,
+    host_key_fingerprint  TEXT,
+    notes                 TEXT NOT NULL DEFAULT '',
+    created_at            INTEGER NOT NULL,
+    updated_at            INTEGER NOT NULL
+  );
+  CREATE INDEX servers_owner ON servers(owner_id);
+
+  CREATE TABLE server_shares (
+    server_id   TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    permission  TEXT NOT NULL CHECK (permission IN ('use', 'manage')),
+    created_by  TEXT,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (server_id, user_id)
+  );
+  CREATE INDEX server_shares_user ON server_shares(user_id);
+
+  -- Append-only, hash-chained audit trail. Rows reference users by id *and* keep the
+  -- username so history survives account deletion.
+  CREATE TABLE audit_log (
+    seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              INTEGER NOT NULL,
+    actor_id        TEXT,
+    actor_username  TEXT,
+    action          TEXT NOT NULL,
+    target_type     TEXT,
+    target_id       TEXT,
+    ip              TEXT,
+    outcome         TEXT NOT NULL CHECK (outcome IN ('success', 'failure')),
+    details         TEXT NOT NULL DEFAULT '{}',
+    prev_hash       TEXT NOT NULL,
+    hash            TEXT NOT NULL
+  );
+  CREATE TRIGGER audit_log_no_update BEFORE UPDATE ON audit_log
+    BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+  CREATE TRIGGER audit_log_no_delete BEFORE DELETE ON audit_log
+    BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+  `,
+];
+
+export function openDatabase(file: string): DB {
+  if (file !== ':memory:') mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const db = new Database(file);
+  if (file !== ':memory:') chmodSync(file, 0o600);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
+  db.pragma('secure_delete = ON');
+  migrate(db);
+  return db;
+}
+
+function migrate(db: DB): void {
+  const current = db.pragma('user_version', { simple: true }) as number;
+  for (let i = current; i < MIGRATIONS.length; i++) {
+    db.transaction(() => {
+      db.exec(MIGRATIONS[i]!);
+      db.pragma(`user_version = ${i + 1}`);
+    })();
+  }
+}

@@ -1,0 +1,76 @@
+# Any-SSH
+
+A self-hosted, multi-user SSH client you can use from any browser: desktop, Mac, iPhone, iPad or Android.
+Install it as an app from Safari ("Add to Home Screen") or Chrome.
+
+- **Accounts:** sign-in with Argon2id-hashed passwords, optional TOTP two-factor with recovery codes, device list and
+  remote sign-out.
+- **Administration:** admins create users (temporary password, forced change), set roles, disable, unlock, reset
+  password or 2FA, delete, and read a tamper-evident audit log.
+- **Saved servers** with key, stored-password or ask-each-time authentication, and pinned host keys.
+- **SSH keys:** generate (Ed25519, ECDSA, RSA 4096) or import. Private keys are encrypted at rest and never leave the
+  server.
+- **Sharing:** share a server with any number of people as *use* or *manage*. They connect with the owner's credentials
+  without ever seeing them; revoking access closes their open terminals.
+- **Terminal:** xterm.js over a WebSocket, multiple tabs, and an extra-keys bar (Esc, Tab, Ctrl, Alt, arrows) on touch
+  devices.
+
+Security design, threat model and known gaps: [docs/SECURITY.md](docs/SECURITY.md).
+
+## Quick start (development)
+
+Requires Node 22+.
+
+```bash
+npm run install:all
+cd server
+export ANYSSH_MASTER_KEY=$(npm run -s gen-key)
+export ANYSSH_ORIGIN=http://localhost:5173   # the Vite dev server
+npm run dev                                   # API on :8080, prints a one-time setup token
+```
+
+In another terminal:
+
+```bash
+cd web && npm run dev                         # UI on http://localhost:5173
+```
+
+Open the UI, paste the setup token from the server log, and create the first administrator.
+
+To try it against an SSH server on the same machine, also set `ANYSSH_ALLOW_LOOPBACK_TARGETS=true` (off by default; see
+the SSRF notes in the security doc).
+
+## Production
+
+```bash
+npm run install:all
+npm run build                     # builds web/dist and server/dist
+cp .env.example .env              # fill in ANYSSH_MASTER_KEY and ANYSSH_ORIGIN
+set -a; . ./.env; set +a
+npm start                         # serves the UI and API on ANYSSH_HOST:ANYSSH_PORT
+```
+
+Put it behind a TLS reverse proxy that forwards WebSocket upgrades. Example Caddyfile:
+
+```
+ssh.example.com {
+  reverse_proxy 127.0.0.1:8080
+}
+```
+
+The PWA (install to home screen, offline shell) needs HTTPS.
+
+## Tests
+
+```bash
+npm test          # server unit + API + end-to-end terminal tests (spins up a real SSH server in-process)
+npm run typecheck
+```
+
+## Layout
+
+```
+server/   Fastify API, SSH proxy, SQLite schema (src/db.ts), tests
+web/      React + Vite PWA, xterm.js terminal
+docs/     Security and design notes
+```
