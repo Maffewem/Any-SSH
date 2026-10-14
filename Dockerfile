@@ -35,6 +35,9 @@ COPY --from=build --chown=root:root /src/server/package.json ./
 COPY --from=build --chown=root:root /src/server/node_modules ./node_modules
 COPY --from=build --chown=root:root /src/server/dist ./dist
 COPY --from=build --chown=root:root /src/web/dist /app/web/dist
+# The deployment files ship in the image so `any-ssh update` doesn't depend on the source repo being reachable.
+COPY compose.yaml /app/deploy/compose.yaml
+COPY deploy/Caddyfile deploy/any-ssh /app/deploy/
 # The app runs unprivileged and can write only to /data.
 RUN mkdir -p /data && chown node:node /data && chmod 700 /data
 USER node

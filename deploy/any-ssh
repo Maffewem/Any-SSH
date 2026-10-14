@@ -169,12 +169,14 @@ update_app() {
   fi
   backup
   say "Downloading the latest version"
-  fetch compose.yaml "$tmp/compose.yaml"
-  fetch deploy/Caddyfile "$tmp/Caddyfile"
-  fetch deploy/any-ssh "$tmp/any-ssh"
+  dc pull --quiet || die "Couldn't download the new version. Check this server can reach ghcr.io, then try again."
+  image="$(app_image)"
+  # The deployment files come out of the new image (works even if the source repo is private); ANYSSH_SOURCE overrides.
+  fetch compose.yaml "$tmp/compose.yaml" "$image"
+  fetch deploy/Caddyfile "$tmp/Caddyfile" "$image"
+  fetch deploy/any-ssh "$tmp/any-ssh" "$image"
   install -m 644 "$tmp/compose.yaml" "$DIR/compose.yaml"
   install -m 644 "$tmp/Caddyfile" "$DIR/deploy/Caddyfile"
-  dc pull --quiet || die "Couldn't download the new version. Check this server can reach ghcr.io, then try again."
   image="$(app_image)"
   dc up -d --remove-orphans
   if ! (wait_healthy); then
@@ -247,7 +249,15 @@ EOF
   esac
 }
 
-fetch() { curl -fsSL --proto '=https,file' "$SOURCE/$1" -o "$2"; }
+# fetch <path in repo> <destination> [image]: from ANYSSH_SOURCE when set, otherwise out of the image's /app/deploy.
+fetch() {
+  if [ -n "${ANYSSH_SOURCE:-}" ] || [ -z "${3:-}" ]; then
+    curl -fsSL --proto '=https,file' "$SOURCE/$1" -o "$2"
+  else
+    docker run --rm --pull never --network none --entrypoint cat "$3" "/app/deploy/$(basename "$1")" >"$2" 2>/dev/null ||
+      die "This image doesn't include its deployment files yet. Try again after the next release, or set ANYSSH_SOURCE."
+  fi
+}
 
 case "${1:-help}" in
   start)
