@@ -179,3 +179,11 @@ These are intentionally out of scope for this first pass:
 - Audit log export / shipping to a SIEM.
 - Native iOS/macOS wrappers if the PWA hits limits (e.g. background sessions, hardware keyboard shortcuts).
 - External penetration test before exposing a deployment to the internet.
+
+## Updates
+
+The only outbound call added for update checks is an anonymous, read-only request to the image registry (ghcr.io) for the
+image's labels, every ~6 hours; it can be disabled with `ANYSSH_UPDATE_CHECK=false`. The app never receives the Docker
+socket and cannot update itself: installing is done by `any-ssh update` or an opt-in systemd timer on the host, which back
+up first and roll back if the new image is unhealthy. Images are pulled by tag over TLS from the registry; they are not
+signature-verified yet (a possible hardening: cosign signatures and pinning by digest).

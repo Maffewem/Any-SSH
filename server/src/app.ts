@@ -22,6 +22,8 @@ import { SessionStore } from './sessions.js';
 import { TerminalRegistry } from './ssh/registry.js';
 import { registerTerminalRoute } from './ssh/terminal.js';
 import type { AppContext } from './types.js';
+import { UpdateChecker } from './updates.js';
+import { registerVersionRoutes } from './routes/version.js';
 
 /** Header the web client sends on every state-changing request (see docs/SECURITY.md, CSRF). */
 export const CSRF_HEADER = 'x-any-ssh';
@@ -33,7 +35,7 @@ export interface BuiltApp {
   setup: { token: string | null };
 }
 
-export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean; mailer?: Mailer } = {}): Promise<BuiltApp> {
+export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean; mailer?: Mailer; updates?: ConstructorParameters<typeof UpdateChecker>[2] } = {}): Promise<BuiltApp> {
   const db = opts.db ?? openDatabase(config.dbPath);
   const sessions = new SessionStore(db, config);
   const terminals = new TerminalRegistry();
@@ -55,6 +57,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
     sessions,
     terminals,
     mailer: opts.mailer ?? createMailer(config, app.log),
+    updates: new UpdateChecker(config, app.log, opts.updates),
   };
   const stale = countStale(db, ctx.box);
   if (stale > 0) app.log.warn(`${stale} secret(s) are sealed with a retired master key. Run \`npm run rotate-keys\`.`);
@@ -123,6 +126,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   registerKeyRoutes(app, ctx);
   registerServerRoutes(app, ctx);
   registerTerminalRoute(app, ctx);
+  registerVersionRoutes(app, ctx);
 
   if (config.webRoot && existsSync(path.join(config.webRoot, 'index.html'))) {
     await app.register(fastifyStatic, { root: config.webRoot, wildcard: false });
@@ -135,10 +139,13 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
     app.setNotFoundHandler((_req, reply) => reply.status(404).send({ error: 'Not found', code: 'not_found' }));
   }
 
+  // Tests build many apps; only a real server (which has a data dir on disk) polls the registry.
+  if (!opts.db) ctx.updates.start();
   const purge = setInterval(() => sessions.purgeExpired(), 10 * 60_000);
   purge.unref();
   app.addHook('onClose', async () => {
     clearInterval(purge);
+    ctx.updates.stop();
     terminals.closeAll('Server shutting down');
     if (!opts.db) db.close();
   });

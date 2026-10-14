@@ -48,6 +48,7 @@ The installer adds an `any-ssh` command:
 | Command | What it does |
 | --- | --- |
 | `sudo any-ssh update` | Backs up, downloads the latest version and restarts. Open terminals drop and users reconnect, so pick a quiet time. |
+| `sudo any-ssh auto-update on` | Installs updates by itself: a systemd timer checks daily around 04:00 and updates only if a newer image was published. `off` / `status` also work. Off by default. |
 | `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). |
 | `sudo any-ssh config` | Edits the settings, e.g. to add SMTP later, and applies them. |
 | `sudo any-ssh doctor` | Checks the domain's public DNS, this server's public IP and the HTTPS certificate, and says what to fix. |
@@ -180,3 +181,16 @@ support and long connection timeouts (at least 1 hour) on the load balancer.
 
 Suggested order when the time comes: Postgres first, since it also gives managed backups even on one instance. Then
 Redis for tickets, rate limits and revocation. Then a second instance behind the load balancer.
+
+## Versions and updates
+
+- The admin **Users** page shows the running version and build, and an "Update available" notice when a newer image is
+  published for the tag you follow (`ANYSSH_VERSION`). The server finds out by reading the image's labels from ghcr.io
+  every few hours (anonymous, read-only; nothing about your server is sent). Set `ANYSSH_UPDATE_CHECK=false` in `.env`
+  to stop this entirely.
+- Applying an update always happens on the host, never from the web app, so the app has no Docker access.
+  `sudo any-ssh update` (manual) and `any-ssh auto-update on` (opt-in, daily) both take a database backup first, and if
+  the new version does not become healthy the previous image is put back automatically.
+- A rollback restores the old program, not the database. If the new version already changed the database schema, the
+  old one may refuse to start; the pre-update backup is in `/opt/any-ssh/backups`.
+- To pin a release instead of following `latest`, set `ANYSSH_VERSION=1.2` in `.env` (tags come from `v*` git tags).
