@@ -3,7 +3,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
-import { post, type ConnectChoice, type Server } from '../api';
+import { notifyLocked, post, type ConnectChoice, type Server } from '../api';
 import { Field, Form, Modal } from '../ui';
 
 type Prompt =
@@ -143,6 +143,10 @@ export function TerminalSession(props: {
             break;
           case 'exit':
             t.writeln(`\r\n\x1b[90m[${m.reason}]\x1b[0m`);
+            break;
+          case 'locked':
+            // The server paused this terminal because the session locked (perhaps from another tab).
+            notifyLocked();
             break;
         }
       };

@@ -1,15 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
-import { get, post, setUnauthenticatedHandler, type ConnectChoice, type Server, type User } from './api';
+import { get, post, setLockedHandler, setUnauthenticatedHandler, type ConnectChoice, type Server, type User } from './api';
+import { LockScreen, useIdleLock } from './lock';
 import { AccountPage } from './pages/Account';
 import { AdminUsersPage, AuditPage } from './pages/Admin';
-import { VersionCard } from './pages/Version';
+import { SettingsPage } from './pages/Settings';
 import { ForcePasswordChangePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
 import { KeysPage } from './pages/Keys';
 import { ServersPage } from './pages/Servers';
 import { TerminalSession, type TerminalState } from './terminal/TerminalSession';
 
-type Page = 'servers' | 'keys' | 'account' | 'users' | 'audit';
-type Boot = { kind: 'loading' } | { kind: 'setup' } | { kind: 'login'; mfaPending: boolean } | { kind: 'app'; user: User };
+type Page = 'servers' | 'keys' | 'account' | 'users' | 'audit' | 'settings';
+type Boot =
+  | { kind: 'loading' }
+  | { kind: 'setup' }
+  | { kind: 'login'; mfaPending: boolean }
+  /** Signed in but locked when the page loaded, so there is no app state to keep behind the lock. */
+  | { kind: 'locked'; username: string; displayName: string }
+  | { kind: 'app'; user: User };
 
 interface OpenTerminal {
   tabId: string;
@@ -28,7 +35,7 @@ function linkTokenFromHash(): string | null {
 
 function pageFromHash(): Page {
   const h = location.hash.replace(/^#\/?/, '');
-  return (['servers', 'keys', 'account', 'users', 'audit'] as const).find((p) => p === h) ?? 'servers';
+  return (['servers', 'keys', 'account', 'users', 'audit', 'settings'] as const).find((p) => p === h) ?? 'servers';
 }
 
 export function App() {
@@ -37,13 +44,16 @@ export function App() {
   const [terminals, setTerminals] = useState<OpenTerminal[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [linkToken, setLinkToken] = useState<string | null>(linkTokenFromHash);
+  /** Locked while the app is open: the app stays mounted underneath, hidden. */
+  const [locked, setLocked] = useState(false);
 
   const refresh = useCallback(async () => {
     const setup = await get<{ needed: boolean }>('/api/setup');
     if (setup.needed) return setBoot({ kind: 'setup' });
     try {
-      const me = await get<{ user?: User; mfaRequired?: boolean }>('/api/auth/me');
-      if (me.user) setBoot({ kind: 'app', user: me.user });
+      const me = await get<{ user?: User; mfaRequired?: boolean; locked?: boolean; username?: string; displayName?: string }>('/api/auth/me');
+      if (me.locked) setBoot({ kind: 'locked', username: me.username!, displayName: me.displayName! });
+      else if (me.user) setBoot({ kind: 'app', user: me.user });
       else setBoot({ kind: 'login', mfaPending: !!me.mfaRequired });
     } catch {
       setBoot({ kind: 'login', mfaPending: false });
@@ -54,8 +64,10 @@ export function App() {
     void refresh();
     setUnauthenticatedHandler(() => {
       setTerminals([]);
+      setLocked(false);
       setBoot({ kind: 'login', mfaPending: false });
     });
+    setLockedHandler(() => setLocked(true));
     const onHash = () => {
       setLinkToken(linkTokenFromHash());
       setPage(pageFromHash());
@@ -65,11 +77,18 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, [refresh]);
 
+  useIdleLock(boot.kind === 'app' && !locked, () => setLocked(true));
+
   const logout = async () => {
     await post('/api/auth/logout').catch(() => {});
     setTerminals([]);
     setActiveTab(null);
+    setLocked(false);
     setBoot({ kind: 'login', mfaPending: false });
+  };
+  const lockNow = async () => {
+    await post('/api/auth/lock').catch(() => {});
+    setLocked(true);
   };
 
   if (linkToken) {
@@ -88,9 +107,22 @@ export function App() {
   }
   if (boot.kind === 'loading') return <div className="loading">Loading…</div>;
   if (boot.kind === 'setup') return <SetupPage onDone={() => setBoot({ kind: 'login', mfaPending: false })} />;
+  if (boot.kind === 'locked') {
+    return (
+      <LockScreen
+        username={boot.username}
+        displayName={boot.displayName}
+        onUnlocked={(u) => setBoot({ kind: 'app', user: u })}
+        onSignOut={logout}
+      />
+    );
+  }
   if (boot.kind === 'login') return <LoginPage mfaPending={boot.mfaPending} onLoggedIn={(user) => setBoot({ kind: 'app', user })} />;
 
   const user = boot.user;
+  if (locked && user.mustChangePassword) {
+    return <LockScreen username={user.username} displayName={user.displayName} onUnlocked={(u) => (setLocked(false), setBoot({ kind: 'app', user: u }))} onSignOut={logout} />;
+  }
   if (user.mustChangePassword) {
     return <ForcePasswordChangePage onDone={(u) => setBoot({ kind: 'app', user: u })} onLogout={logout} />;
   }
@@ -112,12 +144,14 @@ export function App() {
     { id: 'keys', label: 'Keys' },
     { id: 'users', label: 'Users', admin: true },
     { id: 'audit', label: 'Audit', admin: true },
+    { id: 'settings', label: 'Settings', admin: true },
     { id: 'account', label: 'Account' },
   ];
   const showingTerminal = activeTab !== null;
 
   return (
-    <div className={`app ${showingTerminal ? 'terminal-mode' : ''}`}>
+    <>
+    <div className={`app ${showingTerminal ? 'terminal-mode' : ''} ${locked ? 'locked' : ''}`} inert={locked} aria-hidden={locked}>
       <header className="topbar">
         <a className="brand" href="#/servers" onClick={() => setActiveTab(null)}>
           <img src="/icon.svg" alt="" width={24} height={24} />
@@ -132,6 +166,9 @@ export function App() {
               </a>
             ))}
         </nav>
+        <button className="ghost signout" onClick={lockNow} title="Lock this session; unlock with your password">
+          Lock
+        </button>
         <button className="ghost signout" onClick={logout}>
           Sign out
         </button>
@@ -179,16 +216,21 @@ export function App() {
             {page === 'servers' && <ServersPage onConnect={connect} />}
             {page === 'keys' && <KeysPage />}
             {page === 'account' && <AccountPage user={user} onUserChange={(u) => setBoot({ kind: 'app', user: u })} />}
-            {page === 'users' && user.role === 'admin' && (
-              <>
-                <VersionCard />
-                <AdminUsersPage me={user} />
-              </>
-            )}
+            {page === 'users' && user.role === 'admin' && <AdminUsersPage me={user} />}
             {page === 'audit' && user.role === 'admin' && <AuditPage />}
+            {page === 'settings' && user.role === 'admin' && <SettingsPage />}
           </>
         )}
       </main>
     </div>
+    {locked && (
+      <LockScreen
+        username={user.username}
+        displayName={user.displayName}
+        onUnlocked={(u) => (setLocked(false), setBoot({ kind: 'app', user: u }))}
+        onSignOut={logout}
+      />
+    )}
+    </>
   );
 }
