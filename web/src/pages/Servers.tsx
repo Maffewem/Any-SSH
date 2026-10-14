@@ -1,13 +1,42 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { del, get, patch, post, put, type AuthMethod, type ConnectChoice, type ConnectCredential, type Server, type Share, type ShareCredentials, type SshKey } from '../api';
+import type { ConnectLink } from '../App';
 import { Field, Form, Modal, useAsync } from '../ui';
 
-export function ServersPage({ onConnect }: { onConnect: (s: Server, choice?: ConnectChoice) => void }) {
+export function ServersPage({
+  onConnect,
+  link,
+  onLinkHandled,
+}: {
+  onConnect: (s: Server, choice?: ConnectChoice) => void;
+  link?: ConnectLink | null;
+  onLinkHandled?: () => void;
+}) {
   const { data, error, reload } = useAsync(() => get<{ servers: Server[] }>('/api/servers'), []);
   const [editing, setEditing] = useState<Server | 'new' | null>(null);
   const [sharing, setSharing] = useState<Server | null>(null);
   const [connecting, setConnecting] = useState<Server | null>(null);
   const [filter, setFilter] = useState('');
+  const [prefill, setPrefill] = useState<ConnectLink | null>(null);
+
+  // A deep link opens the matching saved server, or the add-server form pre-filled with its address.
+  useEffect(() => {
+    if (!link || !data) return;
+    const matches = data.servers.filter(
+      (s) => s.host.toLowerCase() === link.host.toLowerCase() && (!link.port || s.port === link.port) && (!link.user || s.username === link.user),
+    );
+    if (matches.length === 1) {
+      const s = matches[0]!;
+      if (s.credentials === 'own') setConnecting(s);
+      else onConnect(s);
+    } else if (matches.length > 1) {
+      setFilter(link.host);
+    } else {
+      setPrefill(link);
+      setEditing('new');
+    }
+    onLinkHandled?.();
+  }, [link, data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const servers = (data?.servers ?? []).filter((s) =>
     `${s.name} ${s.host} ${s.username}`.toLowerCase().includes(filter.toLowerCase()),
@@ -67,7 +96,8 @@ export function ServersPage({ onConnect }: { onConnect: (s: Server, choice?: Con
       {editing && (
         <ServerForm
           server={editing === 'new' ? null : editing}
-          onClose={() => setEditing(null)}
+          prefill={editing === 'new' ? prefill : null}
+          onClose={() => (setEditing(null), setPrefill(null))}
           onSaved={() => (setEditing(null), reload())}
         />
       )}
@@ -87,13 +117,13 @@ function authLabel(m: AuthMethod) {
   return m === 'key' ? 'SSH key' : m === 'password' ? 'Stored password' : 'Password on connect';
 }
 
-function ServerForm({ server, onClose, onSaved }: { server: Server | null; onClose: () => void; onSaved: () => void }) {
+function ServerForm({ server, prefill, onClose, onSaved }: { server: Server | null; prefill?: ConnectLink | null; onClose: () => void; onSaved: () => void }) {
   const isOwner = !server || server.access === 'owner';
   const keys = useAsync(() => (isOwner ? get<{ keys: SshKey[] }>('/api/keys') : Promise.resolve({ keys: [] })), []);
-  const [name, setName] = useState(server?.name ?? '');
-  const [host, setHost] = useState(server?.host ?? '');
-  const [port, setPort] = useState(String(server?.port ?? 22));
-  const [username, setUsername] = useState(server?.username ?? '');
+  const [name, setName] = useState(server?.name ?? prefill?.host ?? '');
+  const [host, setHost] = useState(server?.host ?? prefill?.host ?? '');
+  const [port, setPort] = useState(String(server?.port ?? prefill?.port ?? 22));
+  const [username, setUsername] = useState(server?.username ?? prefill?.user ?? '');
   const [authMethod, setAuthMethod] = useState<AuthMethod>(server?.authMethod ?? 'key');
   const [keyId, setKeyId] = useState(server?.key?.id ?? '');
   const [password, setPassword] = useState('');

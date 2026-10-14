@@ -25,6 +25,27 @@ function linkTokenFromHash(): string | null {
   return m ? m[2]! : null;
 }
 
+/** Deep link (#/connect?host=…&port=…&user=…) from another tool, e.g. a dashboard's "Open terminal" button. */
+export interface ConnectLink {
+  host: string;
+  port?: number;
+  user?: string;
+}
+
+function connectLinkFromHash(): ConnectLink | null {
+  const m = /^#\/connect\?(.*)$/.exec(location.hash);
+  if (!m) return null;
+  const q = new URLSearchParams(m[1]);
+  const host = q.get('host')?.trim().slice(0, 255);
+  if (!host) return null;
+  const port = Number(q.get('port'));
+  return {
+    host,
+    port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined,
+    user: q.get('user')?.trim().slice(0, 64) || undefined,
+  };
+}
+
 function pageFromHash(): Page {
   const h = location.hash.replace(/^#\/?/, '');
   return (['servers', 'keys', 'account', 'users', 'audit'] as const).find((p) => p === h) ?? 'servers';
@@ -36,6 +57,7 @@ export function App() {
   const [terminals, setTerminals] = useState<OpenTerminal[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [linkToken, setLinkToken] = useState<string | null>(linkTokenFromHash);
+  const [connectLink, setConnectLink] = useState<ConnectLink | null>(connectLinkFromHash);
 
   const refresh = useCallback(async () => {
     const setup = await get<{ needed: boolean }>('/api/setup');
@@ -57,6 +79,7 @@ export function App() {
     });
     const onHash = () => {
       setLinkToken(linkTokenFromHash());
+      setConnectLink(connectLinkFromHash());
       setPage(pageFromHash());
       setActiveTab(null);
     };
@@ -175,7 +198,14 @@ export function App() {
         ))}
         {!showingTerminal && (
           <>
-            {page === 'servers' && <ServersPage onConnect={connect} />}
+            {page === 'servers' && <ServersPage
+                onConnect={connect}
+                link={connectLink}
+                onLinkHandled={() => {
+                  setConnectLink(null);
+                  history.replaceState(null, '', '#/servers');
+                }}
+              />}
             {page === 'keys' && <KeysPage />}
             {page === 'account' && <AccountPage user={user} onUserChange={(u) => setBoot({ kind: 'app', user: u })} />}
             {page === 'users' && user.role === 'admin' && <AdminUsersPage me={user} />}
