@@ -33,12 +33,15 @@ export const ADMIN_PASSWORD = 'correct horse battery staple';
 /** Minimal cookie-jar client over app.inject. */
 export class Client {
   cookie = '';
+  /** Address the request appears to come from (the socket address unless a trusted proxy header says otherwise). */
+  ip = '127.0.0.1';
   constructor(private readonly built: BuiltApp) {}
 
   async req(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, body?: unknown, headers: Record<string, string> = {}) {
     const res = await this.built.app.inject({
       method,
       url,
+      remoteAddress: this.ip,
       payload: body as Record<string, unknown> | undefined,
       headers: {
         ...(method === 'GET' ? {} : { [CSRF_HEADER]: '1' }),

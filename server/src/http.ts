@@ -63,12 +63,17 @@ interface GuardOptions {
   /** Allow users who still have to replace an admin-issued temporary password. */
   allowPendingPasswordChange?: boolean;
   admin?: boolean;
+  /** Let a session through that is held by the trusted-IP challenge (only the challenge routes). */
+  allowIpChallenge?: boolean;
 }
 
 /** Returns the authenticated, fully-logged-in user or throws 401/403. */
 export function requireUser(req: FastifyRequest, opts: GuardOptions = {}): ResolvedSession {
   const auth = req.auth;
   if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'Not signed in', 'unauthenticated');
+  if (auth.session.ip_challenge === 1 && !opts.allowIpChallenge) {
+    throw new HttpError(403, 'Verify this sign-in first', 'ip_challenge');
+  }
   if (auth.user.must_change_password && !opts.allowPendingPasswordChange) {
     throw new HttpError(403, 'You must change your password first', 'password_change_required');
   }

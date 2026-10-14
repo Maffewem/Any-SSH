@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { get, post, setUnauthenticatedHandler, type ConnectChoice, type Server, type User } from './api';
+import { get, post, setIpChallengeHandler, setUnauthenticatedHandler, type ConnectChoice, type Server, type User } from './api';
 import { AccountPage } from './pages/Account';
 import { AdminUsersPage, AuditPage } from './pages/Admin';
 import { VersionCard } from './pages/Version';
-import { ForcePasswordChangePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
+import { ForcePasswordChangePage, IpChallengePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
 import { KeysPage } from './pages/Keys';
 import { ServersPage } from './pages/Servers';
 import { TerminalSession, type TerminalState } from './terminal/TerminalSession';
 
 type Page = 'servers' | 'keys' | 'account' | 'users' | 'audit';
-type Boot = { kind: 'loading' } | { kind: 'setup' } | { kind: 'login'; mfaPending: boolean } | { kind: 'app'; user: User };
+type Boot = { kind: 'loading' } | { kind: 'setup' } | { kind: 'login'; mfaPending: boolean } | { kind: 'ipchallenge' } | { kind: 'app'; user: User };
 
 interface OpenTerminal {
   tabId: string;
@@ -42,8 +42,9 @@ export function App() {
     const setup = await get<{ needed: boolean }>('/api/setup');
     if (setup.needed) return setBoot({ kind: 'setup' });
     try {
-      const me = await get<{ user?: User; mfaRequired?: boolean }>('/api/auth/me');
-      if (me.user) setBoot({ kind: 'app', user: me.user });
+      const me = await get<{ user?: User; mfaRequired?: boolean; ipChallenge?: boolean }>('/api/auth/me');
+      if (me.user && me.ipChallenge) setBoot({ kind: 'ipchallenge' });
+      else if (me.user) setBoot({ kind: 'app', user: me.user });
       else setBoot({ kind: 'login', mfaPending: !!me.mfaRequired });
     } catch {
       setBoot({ kind: 'login', mfaPending: false });
@@ -52,6 +53,10 @@ export function App() {
 
   useEffect(() => {
     void refresh();
+    setIpChallengeHandler(() => {
+      setTerminals([]);
+      setBoot({ kind: 'ipchallenge' });
+    });
     setUnauthenticatedHandler(() => {
       setTerminals([]);
       setBoot({ kind: 'login', mfaPending: false });
@@ -89,6 +94,8 @@ export function App() {
   if (boot.kind === 'loading') return <div className="loading">Loading…</div>;
   if (boot.kind === 'setup') return <SetupPage onDone={() => setBoot({ kind: 'login', mfaPending: false })} />;
   if (boot.kind === 'login') return <LoginPage mfaPending={boot.mfaPending} onLoggedIn={(user) => setBoot({ kind: 'app', user })} />;
+
+  if (boot.kind === 'ipchallenge') return <IpChallengePage onDone={() => void refresh()} onLogout={logout} />;
 
   const user = boot.user;
   if (user.mustChangePassword) {

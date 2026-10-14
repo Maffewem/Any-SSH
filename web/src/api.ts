@@ -92,6 +92,12 @@ export class ApiError extends Error {
 /** Calls that are expected to fail with 401 while signed out; they must not bounce to the login page. */
 const SIGNED_OUT_PATHS = ['/api/auth/login', '/api/auth/mfa', '/api/auth/me', '/api/auth/forgot', '/api/auth/token/'];
 
+let onIpChallenge: (() => void) | null = null;
+/** Called when the server holds this session until the user verifies a sign-in from a new address. */
+export function setIpChallengeHandler(fn: () => void) {
+  onIpChallenge = fn;
+}
+
 let onUnauthenticated: (() => void) | null = null;
 export function setUnauthenticatedHandler(fn: () => void) {
   onUnauthenticated = fn;
@@ -114,6 +120,7 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
     if (res.status === 401 && !SIGNED_OUT_PATHS.some((p) => path.startsWith(p))) {
       onUnauthenticated?.();
     }
+    if (res.status === 403 && data?.code === 'ip_challenge') onIpChallenge?.();
     throw err;
   }
   return data as T;

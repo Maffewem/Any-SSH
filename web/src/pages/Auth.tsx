@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { post, type User } from '../api';
+import { errorMessage, get, post, type User } from '../api';
 import { Field, Form } from '../ui';
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
@@ -56,6 +56,77 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
   );
 }
 
+interface ChallengeInfo {
+  ip: string | null;
+  methods: ('totp' | 'email')[];
+}
+
+/** Shown when the server holds a sign-in from an address that is not on the user's trusted IP list. */
+export function IpChallengePage({ onDone, onLogout }: { onDone: (u: User) => void; onLogout: () => void }) {
+  const [info, setInfo] = useState<ChallengeInfo | null>(null);
+  const [code, setCode] = useState('');
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [emailed, setEmailed] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    get<ChallengeInfo>('/api/auth/ip-challenge').then(setInfo, () => onLogout());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!info) return <div className="loading">Loading…</div>;
+  const hasTotp = info.methods.includes('totp');
+  const hasEmail = info.methods.includes('email');
+  const sendEmail = async () => {
+    const res = await post<{ sent: boolean }>('/api/auth/ip-challenge/send');
+    setEmailed(true);
+    setNote(res.sent ? 'We emailed you an 8-digit code.' : 'A code was sent a moment ago. Check your inbox, or wait a minute to ask again.');
+  };
+  return (
+    <Shell title="Verify this sign-in">
+      <p>
+        You are signing in from <code className="mono">{info.ip ?? 'an unknown address'}</code>, which is not on your trusted IP list.
+        Confirm it is you to continue.
+      </p>
+      {info.methods.length === 0 && <p className="error">There is no way to verify you on this account. Ask an administrator to reset your trusted IP list.</p>}
+      {hasEmail && !emailed && !(hasTotp && !useRecovery) && (
+        <button className="primary" onClick={() => void sendEmail().catch((e: unknown) => setNote(errorMessage(e)))}>
+          Email me a code
+        </button>
+      )}
+      {(emailed || hasTotp) && (
+        <Form
+          submit="Verify"
+          onSubmit={async () => {
+            const res = await post<{ user: User }>('/api/auth/ip-challenge/verify', useRecovery ? { recoveryCode: code } : { code });
+            onDone(res.user);
+          }}
+        >
+          <Field
+            label={useRecovery ? 'Recovery code' : hasTotp ? 'Code from your authenticator app' + (hasEmail ? ' (or the emailed code)' : '') : 'Emailed code'}
+            hint={note ?? undefined}
+          >
+            <input value={code} onChange={(e) => setCode(e.target.value)} inputMode={useRecovery ? 'text' : 'numeric'} autoComplete="one-time-code" autoFocus required />
+          </Field>
+        </Form>
+      )}
+      <div className="row wrap">
+        {hasEmail && hasTotp && !emailed && (
+          <button className="link" onClick={() => void sendEmail().catch((e: unknown) => setNote(errorMessage(e)))}>
+            Email me a code instead
+          </button>
+        )}
+        {hasTotp && (
+          <button className="link" onClick={() => (setUseRecovery(!useRecovery), setCode(''))}>
+            {useRecovery ? 'Use a code instead' : 'Use a recovery code'}
+          </button>
+        )}
+        <button className="link" onClick={onLogout}>
+          Sign out
+        </button>
+      </div>
+    </Shell>
+  );
+}
+
 export function LoginPage({ mfaPending, onLoggedIn }: { mfaPending: boolean; onLoggedIn: (u: User) => void }) {
   const [stage, setStage] = useState<'password' | 'mfa' | 'forgot'>(mfaPending ? 'mfa' : 'password');
   const [username, setUsername] = useState('');
@@ -101,7 +172,7 @@ export function LoginPage({ mfaPending, onLoggedIn }: { mfaPending: boolean; onL
           const res = await post<{ mfaRequired: boolean; user?: User }>('/api/auth/login', { username, password });
           setPassword('');
           if (res.mfaRequired) setStage('mfa');
-          else if (res.user) onLoggedIn(res.user);
+          else if (res.user) onLoggedIn(res.user); // a held sign-in is picked up by the app's challenge handler
         }}
       >
         <Field label="Username">

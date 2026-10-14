@@ -76,7 +76,7 @@ export class SessionStore {
    */
   isAlive(idHash: string): boolean {
     const s = this.db.prepare('SELECT * FROM sessions WHERE id_hash = ?').get(idHash) as SessionRow | undefined;
-    if (!s || s.stage !== 'full') return false;
+    if (!s || s.stage !== 'full' || s.ip_challenge === 1) return false;
     const now = Date.now();
     return now <= s.expires_at && now <= s.last_seen_at + this.config.sessionIdleMinutes * 60_000;
   }

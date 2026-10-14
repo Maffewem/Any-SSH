@@ -10,12 +10,14 @@ import { AuditLog } from './audit.js';
 import type { Config } from './config.js';
 import { SecretBox, randomToken } from './crypto.js';
 import { openDatabase, type DB } from './db.js';
-import { HttpError, sessionToken } from './http.js';
+import { HttpError, clientIp, sessionToken } from './http.js';
+import { checkSessionIp } from './ipTrust.js';
 import { createMailer, type Mailer } from './mail.js';
 import { countStale } from './rotate.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerKeyRoutes } from './routes/keys.js';
+import { registerTrustedIpRoutes } from './routes/trustedIps.js';
 import { registerServerRoutes } from './routes/servers.js';
 import { registerUserRoutes } from './routes/users.js';
 import { SessionStore } from './sessions.js';
@@ -102,7 +104,11 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
       if (origin && !config.allowedOrigins.includes(origin)) throw new HttpError(403, 'Origin not allowed', 'csrf');
     }
     req.auth = sessions.resolve(sessionToken(ctx, req));
-    if (req.auth?.session.stage === 'full') sessions.touch(req.auth.session);
+    if (req.auth?.session.stage === 'full') {
+      sessions.touch(req.auth.session);
+      // Every request (and so every terminal WebSocket upgrade) is checked against the trusted IP list.
+      checkSessionIp(ctx, req.log, req.auth.user, req.auth.session, clientIp(req));
+    }
   });
 
   app.addHook('onSend', async (req, reply) => {
@@ -122,6 +128,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   app.get('/api/health', async () => ({ ok: true }));
   registerAuthRoutes(app, ctx);
   registerAccountRoutes(app, ctx);
+  registerTrustedIpRoutes(app, ctx);
   registerUserRoutes(app, ctx, setup);
   registerKeyRoutes(app, ctx);
   registerServerRoutes(app, ctx);

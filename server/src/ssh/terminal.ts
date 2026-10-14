@@ -55,7 +55,7 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
   const ticket = terminals.redeemTicket(token);
   const origin = req.headers.origin;
   if (!origin || !config.allowedOrigins.includes(origin)) return fail('bad_origin', 'Origin not allowed');
-  if (!auth || auth.session.stage !== 'full' || !ticket || ticket.sessionIdHash !== auth.session.id_hash) {
+  if (!auth || auth.session.stage !== 'full' || auth.session.ip_challenge === 1 || !ticket || ticket.sessionIdHash !== auth.session.id_hash) {
     return fail('unauthorized', 'Not authorised. Reload and try again.');
   }
   const user = auth.user;

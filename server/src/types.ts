@@ -23,6 +23,8 @@ export interface UserRow {
   totp_last_counter: number | null;
   failed_logins: number;
   locked_until: number | null;
+  trusted_ip_enabled: number;
+  trusted_ip_policy: 'notify' | 'challenge';
   last_login_at: number | null;
   password_changed_at: number;
   created_at: number;
@@ -38,6 +40,8 @@ export interface SessionRow {
   expires_at: number;
   ip: string | null;
   user_agent: string | null;
+  ip_challenge: number;
+  flagged_ip: string | null;
 }
 
 export interface SshKeyRow {
