@@ -19,6 +19,10 @@ Install it as an app from Safari ("Add to Home Screen") or Chrome.
 - **Terminal:** xterm.js over a WebSocket, multiple tabs, and an extra-keys bar (Esc, Tab, Ctrl, Alt, arrows) on touch
   devices.
 
+**Deep links:** `https://<your-host>/#/connect?host=<host>&port=<port>&user=<user>` (port and user optional) signs you in as
+usual, then opens a terminal to your saved server with that address, or the add-server form pre-filled if there is none.
+Other tools (for example a dashboard) can link to it; Any-SSH works the same without them.
+
 Security design, threat model and known gaps: [docs/SECURITY.md](docs/SECURITY.md). Deployment and scaling:
 [docs/DEPLOY.md](docs/DEPLOY.md).
 
