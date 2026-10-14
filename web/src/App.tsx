@@ -4,7 +4,6 @@ import { LockScreen, useIdleLock } from './lock';
 import { AccountPage } from './pages/Account';
 import { AdminUsersPage, AuditPage } from './pages/Admin';
 import { SettingsPage } from './pages/Settings';
-import { VersionCard } from './pages/Version';
 import { ForcePasswordChangePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
 import { KeysPage } from './pages/Keys';
 import { ServersPage } from './pages/Servers';
@@ -217,12 +216,7 @@ export function App() {
             {page === 'servers' && <ServersPage onConnect={connect} />}
             {page === 'keys' && <KeysPage />}
             {page === 'account' && <AccountPage user={user} onUserChange={(u) => setBoot({ kind: 'app', user: u })} />}
-            {page === 'users' && user.role === 'admin' && (
-              <>
-                <VersionCard />
-                <AdminUsersPage me={user} />
-              </>
-            )}
+            {page === 'users' && user.role === 'admin' && <AdminUsersPage me={user} />}
             {page === 'audit' && user.role === 'admin' && <AuditPage />}
             {page === 'settings' && user.role === 'admin' && <SettingsPage />}
           </>

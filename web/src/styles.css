@@ -86,7 +86,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .tabs { display: flex; gap: 0.25rem; overflow-x: auto; flex: 1; scrollbar-width: none; }
 .tabs a { color: var(--muted); text-decoration: none; padding: 0.4rem 0.7rem; border-radius: 8px; white-space: nowrap; }
 .tabs a.current { color: var(--text); background: var(--surface-2); }
-.content { flex: 1; overflow-y: auto; padding: 1.25rem; padding-bottom: max(1.25rem, env(safe-area-inset-bottom)); max-width: 1100px; width: 100%; margin: 0 auto; }
+/* The scroller spans the full width so its scrollbar sits at the window edge; the side padding centres the 1100px column. */
+.content { flex: 1; overflow-y: auto; width: 100%; padding: 1.25rem max(1.25rem, calc((100% - 1100px) / 2)); padding-bottom: max(1.25rem, env(safe-area-inset-bottom)); }
 .page-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
 .page-head h1 { margin: 0; }
 .search { max-width: 320px; margin-bottom: 1rem; }
@@ -165,7 +166,7 @@ td.details { max-width: 360px; overflow-wrap: anywhere; color: var(--muted); }
   .topbar { gap: 0.5rem; padding-left: max(0.5rem, env(safe-area-inset-left)); padding-right: max(0.5rem, env(safe-area-inset-right)); }
   .topbar .brand span { display: none; }
   .signout { padding: 0.4rem 0.5rem; font-size: 0.85rem; }
-  .content { padding: 0.85rem; }
+  .content { padding: 0.85rem; padding-bottom: max(0.85rem, env(safe-area-inset-bottom)); }
   .grid { grid-template-columns: 1fr; }
   .modal-backdrop { align-items: end; padding: 0; }
   .modal { max-width: none; border-radius: var(--radius) var(--radius) 0 0; padding-bottom: max(1.25rem, env(safe-area-inset-bottom)); }

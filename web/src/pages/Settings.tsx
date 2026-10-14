@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { del, errorMessage, get, post, put, type SettingsView } from '../api';
 import { Field, Form, useAsync } from '../ui';
+import { VersionCard } from './Version';
 
 function SourceBadge({ source }: { source: 'environment' | 'web' }) {
   return source === 'web' ? <span className="badge accent">Set here</span> : <span className="badge">Server default</span>;
@@ -41,6 +42,7 @@ export function SettingsPage() {
           <MailSection key={`mail-${resets}`} view={current} onSaved={onSaved} />
           <SessionSection key={`sessions-${resets}`} view={current} onSaved={onSaved} />
           <LimitsSection key={`limits-${resets}`} view={current} onSaved={onSaved} />
+          <VersionCard />
         </>
       )}
     </section>
