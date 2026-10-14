@@ -346,3 +346,41 @@ describe('servers and sharing', () => {
     expect((await admin.get('/api/admin/audit/verify')).body.ok).toBe(true);
   });
 });
+
+describe('version and update check', () => {
+  it('is admin only and reports no update when checks are off', async () => {
+    const off = await makeApp({ updateCheck: false });
+    try {
+      const admin = await setupAdmin(off);
+      const { client } = await createUser(off, admin, 'bob');
+      expect((await client.get('/api/admin/version')).status).toBe(403);
+      const v = await admin.post('/api/admin/version/check');
+      expect(v.status).toBe(200);
+      expect(v.body).toMatchObject({ checkEnabled: false, updateAvailable: null, checkedAt: null });
+      expect(v.body.current.version).toBe('dev');
+    } finally {
+      await off.app.close();
+    }
+  });
+
+  it('flags a newer published build', async () => {
+    const registry = async (url: any) => {
+      const u = String(url);
+      const json = (o: unknown) => new Response(JSON.stringify(o), { status: 200 });
+      if (u.endsWith('/manifests/latest')) return json({ config: { digest: 'sha256:c' } });
+      if (u.endsWith('/blobs/sha256:c'))
+        return json({ config: { Labels: { 'org.opencontainers.image.revision': 'bbb', 'org.opencontainers.image.created': '2026-02-01T00:00:00Z' } } });
+      return new Response('no', { status: 404 });
+    };
+    const mine = { version: 'dev', commit: 'aaa', builtAt: '2026-01-01T00:00:00Z' };
+    const b = await makeApp({ updateCheck: true }, { build: mine, fetch: registry as typeof fetch });
+    try {
+      const admin = await setupAdmin(b);
+      const v = await admin.post('/api/admin/version/check');
+      expect(v.body.updateAvailable).toBe(true);
+      expect(v.body.latest.commit).toBe('bbb');
+    } finally {
+      await b.app.close();
+    }
+  });
+});

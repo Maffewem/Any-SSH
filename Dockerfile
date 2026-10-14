@@ -16,6 +16,13 @@ RUN npm --prefix web run build \
 
 # ---- Runtime: only compiled output and production dependencies ----
 FROM node:22-bookworm-slim
+# Identifies this build to the admin UI's version card (set by CI; "dev" for local builds).
+ARG BUILD_VERSION=dev
+ARG BUILD_COMMIT=
+ARG BUILD_DATE=
+ENV ANYSSH_BUILD_VERSION=$BUILD_VERSION \
+    ANYSSH_BUILD_COMMIT=$BUILD_COMMIT \
+    ANYSSH_BUILD_DATE=$BUILD_DATE
 ENV NODE_ENV=production \
     ANYSSH_HOST=0.0.0.0 \
     ANYSSH_PORT=8080 \

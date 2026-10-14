@@ -5,6 +5,7 @@ import type { DB } from './db.js';
 import type { Mailer } from './mail.js';
 import type { SessionStore } from './sessions.js';
 import type { TerminalRegistry } from './ssh/registry.js';
+import type { UpdateChecker } from './updates.js';
 
 export type Role = 'admin' | 'user';
 
@@ -91,6 +92,7 @@ export interface AppContext {
   sessions: SessionStore;
   terminals: TerminalRegistry;
   mailer: Mailer;
+  updates: UpdateChecker;
 }
 
 export function publicUser(u: UserRow) {

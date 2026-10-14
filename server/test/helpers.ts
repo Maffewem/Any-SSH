@@ -4,6 +4,8 @@ import { loadConfig, type Config } from '../src/config.js';
 import { openDatabase } from '../src/db.js';
 import { MemoryMailer } from '../src/mail.js';
 
+type BuildOpts = NonNullable<Parameters<typeof buildApp>[1]>['updates'];
+
 export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
     ...loadConfig({ ANYSSH_MASTER_KEY: randomBytes(32).toString('base64'), ANYSSH_WEB_ROOT: '' }),
@@ -12,10 +14,10 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-export async function makeApp(overrides: Partial<Config> = {}): Promise<BuiltApp & { mail: MemoryMailer }> {
+export async function makeApp(overrides: Partial<Config> = {}, updates?: BuildOpts): Promise<BuiltApp & { mail: MemoryMailer }> {
   const config = testConfig(overrides);
   const mail = new MemoryMailer();
-  return { ...(await buildApp(config, { db: openDatabase(':memory:'), logger: false, mailer: mail })), mail };
+  return { ...(await buildApp(config, { db: openDatabase(':memory:'), logger: false, mailer: mail, ...(updates ? { updates } : {}) })), mail };
 }
 
 /** Pulls the token out of the link in the most recent email to `to`. */
