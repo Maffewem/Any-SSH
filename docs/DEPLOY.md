@@ -48,6 +48,7 @@ The installer adds an `any-ssh` command:
 | Command | What it does |
 | --- | --- |
 | `sudo any-ssh update` | Backs up, downloads the latest version and restarts. Open terminals drop and users reconnect, so pick a quiet time. |
+| `any-ssh update-log` | Shows the update history: every manual or automatic update, with result (updated, failed, rolled back), versions and who started it. Also kept in the app (Settings → Update history, and the audit log) and in `/opt/any-ssh/update.log`. |
 | `sudo any-ssh auto-update on` | Installs updates by itself: a systemd timer checks daily around 04:00 and updates only if a newer image was published. `off` / `status` also work. Off by default. |
 | `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). |
 | `sudo any-ssh config` | Edits the settings, e.g. to add SMTP later, and applies them. |

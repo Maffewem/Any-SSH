@@ -182,3 +182,20 @@ describe('idle lock', () => {
     expect((await other.get('/api/servers')).status).toBe(200);
   });
 });
+
+describe('update history', () => {
+  it('lists updates recorded by the host script, newest first, admin only', async () => {
+    const admin = await setupAdmin(built);
+    const { client } = await createUser(built, admin, 'bob');
+    built.ctx.audit.record({ action: 'system.update', targetType: 'system', details: { result: 'success', trigger: 'auto', from: '1.0.0 (aaaaaaa)', to: '1.1.0 (bbbbbbb)' } });
+    built.ctx.audit.record({ action: 'system.update', targetType: 'system', outcome: 'failure', details: { result: 'rolled_back', trigger: 'manual', from: '1.1.0 (bbbbbbb)', to: '1.2.0 (ccccccc)', note: 'did not start' } });
+    expect((await client.get('/api/admin/version/history')).status).toBe(403);
+    const res = await admin.get('/api/admin/version/history');
+    expect(res.body.updates.map((u: any) => [u.result, u.trigger, u.to])).toEqual([
+      ['rolled_back', 'manual', '1.2.0 (ccccccc)'],
+      ['success', 'auto', '1.1.0 (bbbbbbb)'],
+    ]);
+    expect(res.body.updates[0].note).toBe('did not start');
+    expect(built.ctx.audit.verify().ok).toBe(true);
+  });
+});
