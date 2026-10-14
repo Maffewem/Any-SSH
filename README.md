@@ -4,11 +4,12 @@ A self-hosted, multi-user SSH client you can use from any browser: desktop, Mac,
 Install it as an app from Safari ("Add to Home Screen") or Chrome.
 
 - **Accounts:** sign-in with Argon2id-hashed passwords, optional TOTP two-factor with recovery codes, device list and
-  remote sign-out.
+  remote sign-out. Idle sessions lock (terminals pause) and unlock with the password, without a fresh 2FA sign-in.
 - **Administration:** admins invite users by email (or hand out a temporary password), set roles, disable, unlock,
   send reset links, reset 2FA, delete, and read a tamper-evident audit log.
 - **Email:** invites, "forgot password" reset links and security notices over SMTP (logged to the console in
   development).
+- **Settings page:** admins set SMTP (with a test email), session lock and timeout periods, and terminal limits in the app.
 - **Saved servers** with key, stored-password or ask-each-time authentication, and pinned host keys.
 - **SSH keys:** generate (Ed25519, ECDSA, RSA 4096) or import. Private keys are encrypted at rest, and only their owner
   can export one, after confirming their password.
@@ -67,7 +68,7 @@ set -a; . ./.env; set +a
 npm start                         # serves the UI and API on ANYSSH_HOST:ANYSSH_PORT
 ```
 
-Set the `ANYSSH_SMTP_*` variables in `.env` to send invites and password resets by email.
+Set up email on the **Settings** page once signed in as an admin, or with the `ANYSSH_SMTP_*` variables in `.env`.
 
 To rotate the master key later: `npm --prefix server run gen-key`, restart with the new key in `ANYSSH_MASTER_KEY` and the
 old one in `ANYSSH_PREVIOUS_MASTER_KEYS`, run `npm --prefix server run rotate-keys`, then remove the old key.

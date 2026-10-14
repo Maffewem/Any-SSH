@@ -119,6 +119,15 @@ td.details { max-width: 360px; overflow-wrap: anywhere; color: var(--muted); }
 .mfa-enrol img { background: #fff; padding: 8px; border-radius: 8px; }
 .fingerprint { background: var(--bg); padding: 0.75rem; border-radius: 8px; word-break: break-all; }
 
+/* Idle lock: the app stays mounted (terminals stay connected) but is hidden and inert. */
+.app.locked { visibility: hidden; }
+.lock-screen { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: grid; place-items: center; padding: 1.5rem; overflow-y: auto; }
+
+/* Settings */
+.settings-section { margin-bottom: 1.25rem; }
+.settings-section .page-head { margin-bottom: 0.5rem; }
+.settings-section h2 { margin: 0; }
+
 /* Modal */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); display: grid; place-items: center; padding: 1rem; z-index: 50; }
 .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; width: 100%; max-width: 480px; max-height: calc(100dvh - 2rem); overflow-y: auto; }

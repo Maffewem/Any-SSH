@@ -12,6 +12,21 @@ export interface User {
   locked?: boolean;
 }
 
+export interface SettingsView {
+  mail: {
+    source: 'environment' | 'web';
+    enabled: boolean;
+    host: string;
+    port: number;
+    security: 'tls' | 'starttls';
+    username: string;
+    hasPassword: boolean;
+    from: string;
+  };
+  sessions: { source: 'environment' | 'web'; lockMinutes: number; idleMinutes: number; maxHours: number };
+  limits: { source: 'environment' | 'web'; maxTerminalsPerUser: number };
+}
+
 export type Access = 'owner' | 'manage' | 'use';
 /** Whose credentials a share connects with. */
 export type ShareCredentials = 'owner' | 'own';
@@ -90,11 +105,20 @@ export class ApiError extends Error {
 }
 
 /** Calls that are expected to fail with 401 while signed out; they must not bounce to the login page. */
-const SIGNED_OUT_PATHS = ['/api/auth/login', '/api/auth/mfa', '/api/auth/me', '/api/auth/forgot', '/api/auth/token/'];
+const SIGNED_OUT_PATHS = ['/api/auth/login', '/api/auth/mfa', '/api/auth/me', '/api/auth/forgot', '/api/auth/token/', '/api/auth/unlock'];
 
 let onUnauthenticated: (() => void) | null = null;
 export function setUnauthenticatedHandler(fn: () => void) {
   onUnauthenticated = fn;
+}
+
+/** Called when the server says this session is locked (idle, or locked from another tab). */
+let onLocked: (() => void) | null = null;
+export function setLockedHandler(fn: () => void) {
+  onLocked = fn;
+}
+export function notifyLocked() {
+  onLocked?.();
 }
 
 export async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
@@ -111,9 +135,8 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     const err = new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, data?.code);
-    if (res.status === 401 && !SIGNED_OUT_PATHS.some((p) => path.startsWith(p))) {
-      onUnauthenticated?.();
-    }
+    if (res.status === 401 && err.code === 'session_locked') onLocked?.();
+    else if (res.status === 401 && !SIGNED_OUT_PATHS.some((p) => path.startsWith(p))) onUnauthenticated?.();
     throw err;
   }
   return data as T;

@@ -29,6 +29,8 @@ interface LiveTerminal {
   serverId: string;
   sessionIdHash: string;
   close(reason: string): void;
+  /** Pauses (locked) or resumes the terminal while its web session is locked. */
+  setLocked(locked: boolean): void;
 }
 
 /**
@@ -92,6 +94,10 @@ export class TerminalRegistry {
   closeForSessions(idHashes: string[], reason: string): void {
     const set = new Set(idHashes);
     this.closeWhere((t) => set.has(t.sessionIdHash), reason);
+  }
+
+  setLockedForSession(idHash: string, locked: boolean): void {
+    for (const t of this.live) if (t.sessionIdHash === idHash) t.setLocked(locked);
   }
 
   closeAll(reason: string): void {

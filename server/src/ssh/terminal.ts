@@ -58,6 +58,7 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
   if (!auth || auth.session.stage !== 'full' || !ticket || ticket.sessionIdHash !== auth.session.id_hash) {
     return fail('unauthorized', 'Not authorised. Reload and try again.');
   }
+  if (auth.session.locked_at !== null) return fail('session_locked', 'This session is locked. Unlock it and try again.');
   const user = auth.user;
   const found = getServerAccess(ctx, user.id, ticket.serverId);
   if (!found) return fail('not_found', 'Server not found');
@@ -74,6 +75,17 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
   let shell: ClientChannel | null = null;
   const waiters = new Map<string, (m: ClientMessage) => void>();
   let lastTouch = Date.now();
+  // While the web session is locked nothing from the browser reaches SSH, and SSH output is held
+  // back (the channel is paused, so the remote side waits) rather than sent to an unattended screen.
+  let locked = false;
+  let backpressured = false;
+  const setLocked = (value: boolean) => {
+    if (value === locked || closed) return;
+    locked = value;
+    if (locked) shell?.pause();
+    else if (!backpressured) shell?.resume();
+    send({ type: locked ? 'locked' : 'unlocked' });
+  };
   ws.on('message', (raw, isBinary) => {
     if (isBinary) return;
     let msg: ClientMessage;
@@ -82,6 +94,7 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
     } catch {
       return;
     }
+    if (locked && msg.type !== 'resize') return;
     if (msg.type === 'input') {
       shell?.write(msg.data);
       if (Date.now() - lastTouch > 60_000) {
@@ -126,9 +139,11 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
       audit.record({ ...auditBase, action: 'ssh.session_end', details: { reason, durationMs: Date.now() - startedAt, bytesOut } });
     }
   };
-  const unregister = terminals.add({ userId: user.id, serverId: server.id, sessionIdHash: auth.session.id_hash, close });
+  const unregister = terminals.add({ userId: user.id, serverId: server.id, sessionIdHash: auth.session.id_hash, close, setLocked });
   const sessionCheck = setInterval(() => {
-    if (!sessions.isAlive(auth.session.id_hash)) close('Your session expired. Sign in again.');
+    const state = sessions.state(auth.session.id_hash);
+    if (state === 'dead') close('Your session expired. Sign in again.');
+    else setLocked(state === 'locked');
   }, SESSION_CHECK_MS);
   ws.on('close', () => close('Browser disconnected'));
   ws.on('error', () => close('Browser connection error'));
@@ -215,6 +230,7 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
     conn.shell({ term: 'xterm-256color', cols, rows }, (err, stream) => {
       if (err) return closeWithError(err);
       shell = stream;
+      if (locked) stream.pause();
       send({ type: 'ready' });
       const decoder = new StringDecoder('utf8');
       const forward = (chunk: Buffer) => {
@@ -222,12 +238,14 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
         const data = decoder.write(chunk);
         if (data) send({ type: 'data', data });
         // Simple backpressure: stop reading from SSH while the browser is behind.
-        if (ws.bufferedAmount > HIGH_WATER) {
+        if (ws.bufferedAmount > HIGH_WATER && !backpressured) {
+          backpressured = true;
           stream.pause();
           const wait = setInterval(() => {
             if (ws.bufferedAmount < HIGH_WATER / 4 || closed) {
               clearInterval(wait);
-              stream.resume();
+              backpressured = false;
+              if (!locked) stream.resume();
             }
           }, 50);
         }

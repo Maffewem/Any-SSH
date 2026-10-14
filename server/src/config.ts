@@ -14,7 +14,11 @@ export interface Config {
   allowedOrigins: string[];
   cookieSecure: boolean;
   trustProxy: boolean;
+  /** Idle minutes before a session locks (unlock with the account password, no 2FA). 0 = never lock. */
+  sessionLockMinutes: number;
+  /** Idle minutes before a session is signed out entirely. */
   sessionIdleMinutes: number;
+  /** Absolute session lifetime, however active. */
   sessionMaxHours: number;
   maxTerminalsPerUser: number;
   sshConnectTimeoutMs: number;
@@ -43,10 +47,10 @@ function bool(v: string | undefined, dflt: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
 }
 
-function int(v: string | undefined, dflt: number): number {
+function int(v: string | undefined, dflt: number, min = 1): number {
   if (v === undefined || v === '') return dflt;
   const n = Number.parseInt(v, 10);
-  if (!Number.isFinite(n) || n <= 0) throw new Error(`Invalid integer config value: ${v}`);
+  if (!Number.isFinite(n) || n < min) throw new Error(`Invalid integer config value: ${v}`);
   return n;
 }
 
@@ -103,7 +107,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowedOrigins: origins,
     cookieSecure: bool(env.ANYSSH_COOKIE_SECURE, production),
     trustProxy: bool(env.ANYSSH_TRUST_PROXY, false),
-    sessionIdleMinutes: int(env.ANYSSH_SESSION_IDLE_MINUTES, 30),
+    sessionLockMinutes: int(env.ANYSSH_SESSION_LOCK_MINUTES, 15, 0),
+    sessionIdleMinutes: int(env.ANYSSH_SESSION_IDLE_MINUTES, 120),
     sessionMaxHours: int(env.ANYSSH_SESSION_MAX_HOURS, 12),
     maxTerminalsPerUser: int(env.ANYSSH_MAX_TERMINALS_PER_USER, 8),
     sshConnectTimeoutMs: int(env.ANYSSH_SSH_CONNECT_TIMEOUT_MS, 15000),

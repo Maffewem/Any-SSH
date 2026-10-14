@@ -363,7 +363,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     const body = parse(connectBody, req.body ?? undefined);
     const grant = load(user.id, id, ['owner', 'manage', 'use']);
     const { server, access } = grant;
-    if (terminals.countForUser(user.id) >= ctx.config.maxTerminalsPerUser) {
+    if (terminals.countForUser(user.id) >= ctx.settings.limits.maxTerminalsPerUser) {
       throw new HttpError(429, 'You have too many open terminals. Close one first.', 'too_many_terminals');
     }
 
