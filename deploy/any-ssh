@@ -14,7 +14,9 @@ usage() {
   cat <<EOF
 Usage: any-ssh <command>
 
-  update        Back up, then download the latest version and restart (open terminals reconnect)
+  update        Back up, then download the latest version and restart (open terminals reconnect).
+                If the new version doesn't start, the previous one is put back
+  auto-update   on | off | status: install updates by itself, daily. Off unless you turn it on
   backup        Save a copy of the database to $DIR/backups (keeps the newest $KEEP_BACKUPS)
   status        Show whether it is running and healthy
   logs          Follow the logs (Ctrl+C to stop)
@@ -149,7 +151,113 @@ backup() {
   echo "    Copy backups off this server too. They need the master key to restore, so store them apart from it."
 }
 
-fetch() { curl -fsSL --proto '=https,file' "$SOURCE/$1" -o "$2"; }
+image_id() { docker inspect -f '{{.Image}}' "$(dc ps -q app 2>/dev/null | head -n 1)" 2>/dev/null || true; }
+app_image() { dc config --images 2>/dev/null | grep -m1 'any-ssh:' || true; }
+
+# Back up, pull the new image, restart, and put the old image back if the new one doesn't become healthy.
+# update-if-newer (used by the timer) does nothing unless a newer image was published.
+update_app() {
+  local mode="$1" old_id new_id image tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  old_id="$(image_id)"
+  image="$(app_image)"
+  if [ "$mode" = update-if-newer ]; then
+    dc pull --quiet app 2>/dev/null || { say "Couldn't reach the registry; will try again later"; return 0; }
+    new_id="$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null || true)"
+    if [ -n "$old_id" ] && [ "$old_id" = "$new_id" ]; then say "Already up to date"; return 0; fi
+  fi
+  backup
+  say "Downloading the latest version"
+  dc pull --quiet || die "Couldn't download the new version. Check this server can reach ghcr.io, then try again."
+  image="$(app_image)"
+  # The deployment files come out of the new image (works even if the source repo is private); ANYSSH_SOURCE overrides.
+  fetch compose.yaml "$tmp/compose.yaml" "$image"
+  fetch deploy/Caddyfile "$tmp/Caddyfile" "$image"
+  fetch deploy/any-ssh "$tmp/any-ssh" "$image"
+  install -m 644 "$tmp/compose.yaml" "$DIR/compose.yaml"
+  install -m 644 "$tmp/Caddyfile" "$DIR/deploy/Caddyfile"
+  image="$(app_image)"
+  dc up -d --remove-orphans
+  if ! (wait_healthy); then
+    if [ -n "$old_id" ]; then
+      say "The new version didn't start. Putting the previous version back"
+      docker tag "$old_id" "$image"
+      dc up -d --no-deps app
+      wait_healthy
+      die "Rolled back to the previous version. The backup taken before this update is in $DIR/backups. Run 'any-ssh logs' to see why."
+    fi
+    die "The new version didn't start and there was no previous image to go back to."
+  fi
+  # Replaced last: install writes a new file, so this running copy is unaffected.
+  install -m 755 "$tmp/any-ssh" /usr/local/bin/any-ssh
+  docker image prune -f >/dev/null || true
+  say "Updated and running"
+}
+
+# Opt-in unattended updates through a systemd timer on the host. The web app never gets Docker access.
+auto_update() {
+  local unit=/etc/systemd/system/any-ssh-update
+  case "$1" in
+    on)
+      command -v systemctl >/dev/null || die "Automatic updates need systemd. With cron instead: 0 4 * * * /usr/local/bin/any-ssh update-if-newer"
+      cat >"$unit.service" <<EOF
+[Unit]
+Description=Update Any-SSH if a newer version is published
+After=docker.service network-online.target
+[Service]
+Type=oneshot
+Environment=ANYSSH_DIR=$DIR
+ExecStart=/usr/local/bin/any-ssh update-if-newer
+EOF
+      cat >"$unit.timer" <<EOF
+[Unit]
+Description=Daily Any-SSH update check
+[Timer]
+OnCalendar=*-*-* 04:00
+RandomizedDelaySec=1h
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+      systemctl daemon-reload
+      systemctl enable --now any-ssh-update.timer >/dev/null
+      sed -i '/^ANYSSH_AUTO_UPDATE=/d' "$DIR/.env"
+      echo "ANYSSH_AUTO_UPDATE=true" >>"$DIR/.env"
+      dc up -d
+      say "Automatic updates are on: a daily check around 04:00, with a backup first and a rollback if the new version doesn't start"
+      ;;
+    off)
+      if command -v systemctl >/dev/null; then
+        systemctl disable --now any-ssh-update.timer >/dev/null 2>&1 || true
+        rm -f "$unit.service" "$unit.timer"
+        systemctl daemon-reload
+      fi
+      sed -i '/^ANYSSH_AUTO_UPDATE=/d' "$DIR/.env"
+      dc up -d
+      say "Automatic updates are off"
+      ;;
+    status)
+      if systemctl is-enabled any-ssh-update.timer >/dev/null 2>&1; then
+        say "Automatic updates are on"
+        systemctl list-timers any-ssh-update.timer --no-pager 2>/dev/null | sed -n 1,2p
+      else
+        say "Automatic updates are off (turn on with: sudo any-ssh auto-update on)"
+      fi
+      ;;
+    *) usage >&2; exit 1 ;;
+  esac
+}
+
+# fetch <path in repo> <destination> [image]: from ANYSSH_SOURCE when set, otherwise out of the image's /app/deploy.
+fetch() {
+  if [ -n "${ANYSSH_SOURCE:-}" ] || [ -z "${3:-}" ]; then
+    curl -fsSL --proto '=https,file' "$SOURCE/$1" -o "$2"
+  else
+    docker run --rm --pull never --network none --entrypoint cat "$3" "/app/deploy/$(basename "$1")" >"$2" 2>/dev/null ||
+      die "This image doesn't include its deployment files yet. Try again after the next release, or set ANYSSH_SOURCE."
+  fi
+}
 
 case "${1:-help}" in
   start)
@@ -166,25 +274,11 @@ case "${1:-help}" in
     wait_healthy
     say "Restarted"
     ;;
-  update)
+  update | update-if-newer)
     need_root update
-    backup
-    say "Downloading the latest version"
-    tmp="$(mktemp -d)"
-    trap 'rm -rf "$tmp"' EXIT
-    fetch compose.yaml "$tmp/compose.yaml"
-    fetch deploy/Caddyfile "$tmp/Caddyfile"
-    fetch deploy/any-ssh "$tmp/any-ssh"
-    install -m 644 "$tmp/compose.yaml" "$DIR/compose.yaml"
-    install -m 644 "$tmp/Caddyfile" "$DIR/deploy/Caddyfile"
-    dc pull --quiet || die "Couldn't download the new version. Check this server can reach ghcr.io, then try again."
-    dc up -d --remove-orphans
-    wait_healthy
-    # Replaced last: install writes a new file, so this running copy is unaffected.
-    install -m 755 "$tmp/any-ssh" /usr/local/bin/any-ssh
-    docker image prune -f >/dev/null || true
-    say "Updated and running"
+    update_app "$1"
     ;;
+  auto-update) need_root auto-update; auto_update "${2:-status}" ;;
   backup) need_root backup; backup ;;
   status) dc ps ;;
   doctor) doctor ;;

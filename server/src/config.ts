@@ -31,6 +31,14 @@ export interface Config {
   /** Outgoing mail. null = emails are written to the server log instead (development). */
   smtp: SmtpConfig | null;
   mailFrom: string;
+  /** Periodically ask the image registry whether a newer build of this release channel exists. */
+  updateCheck: boolean;
+  /** Image repository the server is installed from, e.g. ghcr.io/maffewem/any-ssh. */
+  updateImage: string;
+  /** Tag the install follows (ANYSSH_VERSION in .env): latest, or a release line like 1.2. */
+  updateTag: string;
+  /** Whether the host runs automatic updates (`any-ssh auto-update on`). Informational only. */
+  autoUpdate: boolean;
 }
 
 export interface SmtpConfig {
@@ -126,5 +134,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
       : null,
     mailFrom: env.ANYSSH_MAIL_FROM ?? 'Any-SSH <no-reply@localhost>',
+    updateCheck: bool(env.ANYSSH_UPDATE_CHECK, true),
+    updateImage: env.ANYSSH_UPDATE_IMAGE || 'ghcr.io/maffewem/any-ssh',
+    updateTag: env.ANYSSH_VERSION || 'latest',
+    autoUpdate: bool(env.ANYSSH_AUTO_UPDATE, false),
   };
 }

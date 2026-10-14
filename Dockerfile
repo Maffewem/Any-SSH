@@ -16,6 +16,13 @@ RUN npm --prefix web run build \
 
 # ---- Runtime: only compiled output and production dependencies ----
 FROM node:22-bookworm-slim
+# Identifies this build to the admin UI's version card (set by CI; "dev" for local builds).
+ARG BUILD_VERSION=dev
+ARG BUILD_COMMIT=
+ARG BUILD_DATE=
+ENV ANYSSH_BUILD_VERSION=$BUILD_VERSION \
+    ANYSSH_BUILD_COMMIT=$BUILD_COMMIT \
+    ANYSSH_BUILD_DATE=$BUILD_DATE
 ENV NODE_ENV=production \
     ANYSSH_HOST=0.0.0.0 \
     ANYSSH_PORT=8080 \
@@ -28,6 +35,9 @@ COPY --from=build --chown=root:root /src/server/package.json ./
 COPY --from=build --chown=root:root /src/server/node_modules ./node_modules
 COPY --from=build --chown=root:root /src/server/dist ./dist
 COPY --from=build --chown=root:root /src/web/dist /app/web/dist
+# The deployment files ship in the image so `any-ssh update` doesn't depend on the source repo being reachable.
+COPY compose.yaml /app/deploy/compose.yaml
+COPY deploy/Caddyfile deploy/any-ssh /app/deploy/
 # The app runs unprivileged and can write only to /data.
 RUN mkdir -p /data && chown node:node /data && chmod 700 /data
 USER node
