@@ -181,7 +181,57 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const auth = req.auth;
     if (!auth) throw new HttpError(401, 'Not signed in', 'unauthenticated');
     if (auth.session.stage === 'mfa') return { mfaRequired: true };
+    // A locked session learns only enough to draw the lock screen.
+    if (auth.session.locked_at !== null) return { locked: true, username: auth.user.username, displayName: auth.user.display_name };
     return { user: publicUser(auth.user), ipChallenge: auth.session.ip_challenge === 1 };
+  });
+
+  // ---- Idle lock ----
+
+  // Polled by the browser to decide when to show the lock screen. Not counted as activity.
+  app.get('/api/auth/state', async (req) => {
+    const auth = req.auth;
+    if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'Not signed in', 'unauthenticated');
+    if (auth.session.locked_at !== null) return { locked: true };
+    return { locked: false, msUntilLock: sessions.msUntilLock(auth.session) };
+  });
+
+  // The browser reports keyboard/pointer activity that made no other request (reading, scrolling).
+  app.post('/api/auth/heartbeat', async (req) => {
+    requireUser(req, { allowPendingPasswordChange: true });
+    return { ok: true };
+  });
+
+  app.post('/api/auth/lock', async (req) => {
+    const { user, session } = requireUser(req, { allowPendingPasswordChange: true });
+    sessions.lock(session);
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.lock', ip: clientIp(req) });
+    return { ok: true };
+  });
+
+  // Unlocking needs only the account password: the session already passed 2FA when it signed in,
+  // and the idle sign-out and absolute lifetime still apply. Repeated failures end the session.
+  app.post('/api/auth/unlock', loginRateLimit, async (req, reply) => {
+    const auth = req.auth;
+    if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'Sign in again', 'unauthenticated');
+    const { user, session } = auth;
+    if (session.locked_at === null) return { user: publicUser(user) };
+    const { password } = parse(confirmPasswordBody, req.body);
+    const ip = clientIp(req);
+    const accountLocked = user.locked_until !== null && user.locked_until > Date.now();
+    if (accountLocked || !(await verifyPassword(user.password_hash, password))) {
+      const ended = accountLocked || sessions.unlockFailed(session);
+      if (accountLocked) sessions.destroyByHash(session.id_hash);
+      audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.unlock', outcome: 'failure', ip, details: { ended } });
+      if (ended) {
+        clearSessionCookie(ctx, reply);
+        throw new HttpError(401, 'Too many attempts. Sign in again.', 'unauthenticated');
+      }
+      throw new HttpError(401, 'That password is not right.', 'invalid_credentials');
+    }
+    sessions.unlock(session);
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.unlock', ip });
+    return { user: publicUser(user) };
   });
 
   app.post('/api/auth/password', async (req, reply) => {

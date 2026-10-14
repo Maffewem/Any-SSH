@@ -74,6 +74,7 @@ export function requireUser(req: FastifyRequest, opts: GuardOptions = {}): Resol
   if (auth.session.ip_challenge === 1 && !opts.allowIpChallenge) {
     throw new HttpError(403, 'Verify this sign-in first', 'ip_challenge');
   }
+  if (auth.session.locked_at !== null) throw new HttpError(401, 'This session is locked. Enter your password to unlock it.', 'session_locked');
   if (auth.user.must_change_password && !opts.allowPendingPasswordChange) {
     throw new HttpError(403, 'You must change your password first', 'password_change_required');
   }

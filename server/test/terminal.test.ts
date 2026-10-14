@@ -47,6 +47,7 @@ let built: BuiltApp;
 let origin: string;
 let owner: Client;
 let sharee: Client;
+let shareePassword: string;
 let serverId: string;
 let sshd: { port: number; close(): void };
 /** A key the fake sshd accepts but Any-SSH has never stored. */
@@ -63,6 +64,7 @@ beforeAll(async () => {
   const s = await createUser(built, admin, 'sharee');
   owner = o.client;
   sharee = s.client;
+  shareePassword = s.password;
 
   const key = (await owner.post('/api/keys/generate', { name: 'k' })).body.key;
   const oneOff = utils.generateKeyPairSync('ed25519');
@@ -133,6 +135,24 @@ describe('terminal over WebSocket', () => {
     t.send({ type: 'input', data: 'shared' });
     await t.next((m) => m.type === 'data' && String(m.data).includes('SHARED'));
     expect(t.messages.some((m) => m.type === 'hostkey')).toBe(false);
+    t.ws.close();
+  });
+
+  it('pauses a live terminal while the session is locked and resumes it on unlock', async () => {
+    const t = await openTerminal(sharee);
+    await t.next((m) => m.type === 'ready');
+    await sharee.post('/api/auth/lock');
+    await t.next((m) => m.type === 'locked');
+    // Keystrokes from a locked browser never reach the server.
+    t.send({ type: 'input', data: 'sneaky' });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(t.messages.some((m) => m.type === 'data' && String(m.data).includes('SNEAKY'))).toBe(false);
+
+    const unlocked = await sharee.post('/api/auth/unlock', { password: shareePassword });
+    expect(unlocked.status).toBe(200);
+    await t.next((m) => m.type === 'unlocked');
+    t.send({ type: 'input', data: 'back' });
+    await t.next((m) => m.type === 'data' && String(m.data).includes('BACK'));
     t.ws.close();
   });
 

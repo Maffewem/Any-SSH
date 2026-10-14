@@ -2,6 +2,7 @@ import type { SecretBox } from './crypto.js';
 import type { DB } from './db.js';
 import { keyContext } from './routes/keys.js';
 import { serverPasswordContext } from './routes/servers.js';
+import { settingContext } from './settings.js';
 
 const totpContext = (userId: string) => `user:${userId}:totp`;
 
@@ -10,6 +11,7 @@ const SEALED_COLUMNS = [
   { table: 'ssh_keys', column: 'private_key_enc', context: keyContext },
   { table: 'servers', column: 'password_enc', context: serverPasswordContext },
   { table: 'users', column: 'totp_secret_enc', context: totpContext },
+  { table: 'settings', column: 'value_enc', context: settingContext },
 ] as const;
 
 /**

@@ -34,7 +34,8 @@ wrappers can come later.
 | Username enumeration | Unknown usernames still run a full Argon2 verification and return the same error as a wrong password. |
 | Brute force | Per-IP rate limits on login and MFA (10/min) and first-run setup (5/min); account locked 15 min after every 5 consecutive failures (password or MFA). Admins can unlock. |
 | MFA | TOTP (RFC 6238, works with any authenticator app). ±30 s drift, replay of a used code is rejected. Ten single-use recovery codes, stored as SHA-256 hashes. TOTP seed is encrypted at rest. |
-| Sessions | 256-bit random token in an `HttpOnly`, `SameSite=Strict` cookie (`__Host-` prefixed and `Secure` in production). Only the token's SHA-256 is stored, so a database leak cannot be replayed as cookies. 30 min idle and 12 h absolute expiry (configurable). |
+| Sessions | 256-bit random token in an `HttpOnly`, `SameSite=Strict` cookie (`__Host-` prefixed and `Secure` in production). Only the token's SHA-256 is stored, so a database leak cannot be replayed as cookies. Locks after 15 min idle, signs out after 120 min idle, 12 h absolute expiry (all configurable). |
+| Idle lock | Decided server-side from the last real activity (API calls, terminal keystrokes, and a throttled heartbeat when the browser sees keyboard or pointer use; the lock screen's own state check does not count). A locked session gets `401 session_locked` from every API call except `me`, `state`, `unlock` and `logout`, cannot get terminal tickets, and its open terminals are paused: keystrokes are dropped and the SSH channel stops reading, so output waits on the remote side instead of reaching an unattended screen. Unlocking needs the account password only (the session already passed 2FA); 5 wrong passwords end the session, a locked-out account cannot unlock, and the idle sign-out and absolute lifetime still apply while locked. Users can also lock on demand. |
 | Session fixation | A new token is issued after the password step, after MFA, and after a password change. |
 | Revocation | Users can see and sign out their devices. Password change signs out all other sessions. Disabling, demoting, resetting or deleting a user ends their sessions and closes their live terminals immediately. |
 | First run | No default credentials. On an empty database the server prints a one-time setup token to its console; it is required to create the first administrator and is discarded afterwards. |
@@ -94,6 +95,10 @@ rotation.
   `ANYSSH_PREVIOUS_MASTER_KEYS=<old>`, then run `npm run rotate-keys`. Every sealed value is re-encrypted under the new key
   (safe while the server is running), the run is audited, and the server warns at startup while anything still uses a
   retired key. Then drop the old key.
+- **Settings changed in the web UI** are stored in the `settings` table. The SMTP password is sealed under
+  `setting:mail`, re-sealed by key rotation, and never returned by the API (the admin page only learns whether one is
+  saved). Changing the SMTP server or username drops the saved password unless a new one is entered, so a hijacked admin
+  session cannot redirect SMTP to its own server and collect the old password.
 - Key material (and the SMTP password) is removed from `process.env` as soon as it is read, so child processes never
   inherit it. `ANYSSH_MASTER_KEY_FILE` (e.g. a Docker/Kubernetes secret) is preferred over the environment variable.
 - **Weak keys are refused on import:** DSA, and RSA below 2048 bits. Generated keys are Ed25519 by default.
@@ -105,7 +110,9 @@ together yield everything.
 
 ## Email
 
-Outgoing mail uses SMTP configured with `ANYSSH_SMTP_*` variables. TLS is mandatory: implicit TLS on port 465, otherwise
+Outgoing mail uses SMTP configured with `ANYSSH_SMTP_*` variables, or by an admin on the **Settings** page, which then
+takes precedence (until reset) and applies without a restart. A test email can be sent from there. Changes are audited
+(field names only, never the password) and the admin gets a security notice. TLS is mandatory: implicit TLS on port 465, otherwise
 STARTTLS is required and the connection fails rather than sending a reset link in clear text (TLS 1.2+). Messages are plain
 text only. Without SMTP configured, emails are written to the server log (for development), and admins are shown invite
 and reset links directly so they can pass them on.
@@ -126,7 +133,15 @@ and reset links directly so they can pass them on.
    link-local (including cloud metadata `169.254.169.254`), unspecified and multicast addresses are refused unless
    `ANYSSH_ALLOW_LOOPBACK_TARGETS=true`. Private LAN ranges are allowed, since reaching them is the point.
 5. While a terminal is open the server rechecks the web session every 30 s; logout, expiry or revocation closes it.
-   Keystrokes count as activity for the idle timeout.
+   Keystrokes count as activity for the idle lock and timeout. A locked session pauses the terminal (see Idle lock).
+
+## Runtime settings
+
+Admins can change email (SMTP), session timing (lock, idle sign-out, maximum length) and the per-user terminal limit on
+the Settings page. Each group falls back to its environment variable until saved, and can be reset to it. Startup and
+security boundary settings stay environment-only on purpose, so a stolen admin session cannot change them: the master
+key, database, allowed origins, public URL (it is the base of emailed links), cookie and proxy flags, and the loopback
+SSRF guard. Note that an admin can point SMTP at any host and port the server can reach.
 
 ## Web hardening
 
@@ -168,7 +183,8 @@ The installer (`deploy/install.sh`) and the provided `compose.yaml` cover most o
 These are intentionally out of scope for this first pass:
 
 - **Enforced MFA policy** (e.g. require 2FA for admins or everyone) and **WebAuthn / passkeys** (Face ID / Touch ID on
-  iPhone and Mac would be a natural fit).
+  iPhone and Mac would be a natural fit, including as a way to unlock a locked session).
+- Settings are cached per process; with several instances (see DEPLOY.md) a change reaches the others on restart.
 - **SSO** (OIDC / SAML) for organisations.
 - **Groups / teams** for sharing with many people at once.
 - Optional KMS/HSM-backed envelope encryption, so the master key never sits on the Any-SSH host at all.

@@ -4,6 +4,7 @@ import type { SecretBox } from './crypto.js';
 import type { DB } from './db.js';
 import type { Mailer } from './mail.js';
 import type { SessionStore } from './sessions.js';
+import type { Settings } from './settings.js';
 import type { TerminalRegistry } from './ssh/registry.js';
 import type { UpdateChecker } from './updates.js';
 
@@ -42,6 +43,8 @@ export interface SessionRow {
   user_agent: string | null;
   ip_challenge: number;
   flagged_ip: string | null;
+  locked_at: number | null;
+  unlock_failures: number;
 }
 
 export interface SshKeyRow {
@@ -96,6 +99,7 @@ export interface AppContext {
   sessions: SessionStore;
   terminals: TerminalRegistry;
   mailer: Mailer;
+  settings: Settings;
   updates: UpdateChecker;
 }
 

@@ -134,6 +134,20 @@ const MIGRATIONS: string[] = [
   ALTER TABLE server_shares ADD COLUMN can_reshare INTEGER NOT NULL DEFAULT 0;
   `,
   `
+  -- Settings an admin changed in the web UI, one JSON row per group. Absent = use the environment.
+  -- value_enc holds the group's secret (the SMTP password), sealed under "setting:<id>".
+  CREATE TABLE settings (
+    id          TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    value_enc   TEXT,
+    updated_at  INTEGER NOT NULL,
+    updated_by  TEXT
+  );
+  -- Idle lock: set when a session goes idle past the lock period; cleared by re-entering the password.
+  ALTER TABLE sessions ADD COLUMN locked_at INTEGER;
+  ALTER TABLE sessions ADD COLUMN unlock_failures INTEGER NOT NULL DEFAULT 0;
+  `,
+  `
   -- Per-user trusted IP list. Off unless the user turns it on.
   -- 'notify': a session from an unlisted address is allowed but flagged (audit + email).
   -- 'challenge': it is held until the user proves it is them (2FA code or an emailed code).

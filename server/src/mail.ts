@@ -46,6 +46,29 @@ export function createMailer(config: Pick<Config, 'smtp' | 'mailFrom'>, log: Log
   };
 }
 
+/**
+ * The app's mailer: rebuilt from the current settings whenever an admin changes them in the
+ * web UI, so new SMTP details apply without a restart.
+ */
+export class ConfigurableMailer implements Mailer {
+  private inner: Mailer;
+  constructor(
+    private readonly current: () => Pick<Config, 'smtp' | 'mailFrom'>,
+    private readonly log: Log,
+  ) {
+    this.inner = createMailer(current(), log);
+  }
+  reload(): void {
+    this.inner = createMailer(this.current(), this.log);
+  }
+  get delivery() {
+    return this.inner.delivery;
+  }
+  send(msg: MailMessage): Promise<void> {
+    return this.inner.send(msg);
+  }
+}
+
 /** Collects messages instead of sending them. Used in tests. */
 export class MemoryMailer implements Mailer {
   readonly delivery = 'smtp' as const;
@@ -90,6 +113,13 @@ export const emails = {
         `To let it in, enter this code (it works once and expires in ${p.minutes} minutes):\n\n${p.code}\n\n` +
         'If this was not you, do not share the code. Change your password.' +
         footer,
+    };
+  },
+  test(p: { to: string; displayName: string; sentBy: string }): MailMessage {
+    return {
+      to: p.to,
+      subject: 'Any-SSH test email',
+      text: `Hi ${p.displayName},\n\n${p.sentBy} sent this test from the Any-SSH settings page. Email delivery is working.` + footer,
     };
   },
   securityNotice(p: { to: string; displayName: string; what: string }): MailMessage {

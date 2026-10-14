@@ -12,15 +12,17 @@ import { SecretBox, randomToken } from './crypto.js';
 import { openDatabase, type DB } from './db.js';
 import { HttpError, clientIp, sessionToken } from './http.js';
 import { checkSessionIp } from './ipTrust.js';
-import { createMailer, type Mailer } from './mail.js';
+import { ConfigurableMailer, type Mailer } from './mail.js';
 import { countStale } from './rotate.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerTrustedIpRoutes } from './routes/trustedIps.js';
 import { registerServerRoutes } from './routes/servers.js';
+import { registerSettingsRoutes } from './routes/settings.js';
 import { registerUserRoutes } from './routes/users.js';
 import { SessionStore } from './sessions.js';
+import { Settings } from './settings.js';
 import { TerminalRegistry } from './ssh/registry.js';
 import { registerTerminalRoute } from './ssh/terminal.js';
 import type { AppContext } from './types.js';
@@ -39,9 +41,12 @@ export interface BuiltApp {
 
 export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean; mailer?: Mailer; updates?: ConstructorParameters<typeof UpdateChecker>[2] } = {}): Promise<BuiltApp> {
   const db = opts.db ?? openDatabase(config.dbPath);
-  const sessions = new SessionStore(db, config);
+  const box = new SecretBox(config.masterKey, config.previousMasterKeys);
+  const settings = new Settings(db, box, config);
+  const sessions = new SessionStore(db, settings);
   const terminals = new TerminalRegistry();
   sessions.setRevokeListener((hashes) => terminals.closeForSessions(hashes, 'You were signed out.'));
+  sessions.setLockListener((hash, locked) => terminals.setLockedForSession(hash, locked));
 
   const userCount = (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
   const setup = { token: userCount === 0 ? randomToken(18) : null };
@@ -51,16 +56,16 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
     trustProxy: config.trustProxy,
     bodyLimit: 256 * 1024,
   });
-  const ctx: AppContext = {
-    config,
-    db,
-    box: new SecretBox(config.masterKey, config.previousMasterKeys),
-    audit: new AuditLog(db),
-    sessions,
-    terminals,
-    mailer: opts.mailer ?? createMailer(config, app.log),
-    updates: new UpdateChecker(config, app.log, opts.updates),
-  };
+  let mailer = opts.mailer;
+  if (!mailer) {
+    const configurable = new ConfigurableMailer(() => {
+      const mail = settings.mail;
+      return { smtp: mail.smtp, mailFrom: mail.from };
+    }, app.log);
+    settings.onChange((group) => group === 'mail' && configurable.reload());
+    mailer = configurable;
+  }
+  const ctx: AppContext = { config, db, box, audit: new AuditLog(db), sessions, terminals, mailer, settings, updates: new UpdateChecker(config, app.log, opts.updates) };
   const stale = countStale(db, ctx.box);
   if (stale > 0) app.log.warn(`${stale} secret(s) are sealed with a retired master key. Run \`npm run rotate-keys\`.`);
   app.decorateRequest('auth', null);
@@ -104,8 +109,9 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
       if (origin && !config.allowedOrigins.includes(origin)) throw new HttpError(403, 'Origin not allowed', 'csrf');
     }
     req.auth = sessions.resolve(sessionToken(ctx, req));
+    // The lock screen's background state check is not activity; everything else is.
+    if (req.auth?.session.stage === 'full' && req.url.split('?')[0] !== '/api/auth/state') sessions.touch(req.auth.session);
     if (req.auth?.session.stage === 'full') {
-      sessions.touch(req.auth.session);
       // Every request (and so every terminal WebSocket upgrade) is checked against the trusted IP list.
       checkSessionIp(ctx, req.log, req.auth.user, req.auth.session, clientIp(req));
     }
@@ -132,6 +138,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   registerUserRoutes(app, ctx, setup);
   registerKeyRoutes(app, ctx);
   registerServerRoutes(app, ctx);
+  registerSettingsRoutes(app, ctx);
   registerTerminalRoute(app, ctx);
   registerVersionRoutes(app, ctx);
 
