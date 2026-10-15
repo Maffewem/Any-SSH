@@ -7,7 +7,9 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { AuditLog } from './audit.js';
+import { BackupService } from './backup/service.js';
 import { BruteForce } from './bruteForce.js';
+import { registerBackupRoutes } from './routes/backup.js';
 import type { Config } from './config.js';
 import { SecretBox, randomToken } from './crypto.js';
 import { openDatabase, type DB } from './db.js';
@@ -68,7 +70,11 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
     mailer = configurable;
   }
   const audit = new AuditLog(db);
-  const ctx: AppContext = { config, db, box, audit, bruteForce: new BruteForce(db, settings, audit), sessions, terminals, mailer, settings, updates: new UpdateChecker(config, app.log, opts.updates) };
+  const ctx: AppContext = {
+    config, db, box, audit, bruteForce: new BruteForce(db, settings, audit), sessions, terminals, mailer, settings,
+    updates: new UpdateChecker(config, app.log, opts.updates),
+    backups: new BackupService({ db, settings, box, audit, mailer, config, log: app.log }),
+  };
   const stale = countStale(db, ctx.box);
   if (stale > 0) app.log.warn(`${stale} secret(s) are sealed with a retired master key. Run \`npm run rotate-keys\`.`);
   app.decorateRequest('auth', null);
@@ -143,6 +149,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   registerJumpHostRoutes(app, ctx);
   registerServerRoutes(app, ctx);
   registerSettingsRoutes(app, ctx);
+  registerBackupRoutes(app, ctx);
   registerTerminalRoute(app, ctx);
   registerVersionRoutes(app, ctx);
 
@@ -158,7 +165,10 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   }
 
   // Tests build many apps; only a real server (which has a data dir on disk) polls the registry.
-  if (!opts.db) ctx.updates.start();
+  if (!opts.db) {
+    ctx.updates.start();
+    ctx.backups.start();
+  }
   const purge = setInterval(() => {
     sessions.purgeExpired();
     ctx.bruteForce.purge();
@@ -167,6 +177,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   app.addHook('onClose', async () => {
     clearInterval(purge);
     ctx.updates.stop();
+    ctx.backups.stop();
     terminals.closeAll('Server shutting down');
     if (!opts.db) db.close();
   });

@@ -1,4 +1,5 @@
 import type { AuditLog } from './audit.js';
+import type { BackupService } from './backup/service.js';
 import type { BruteForce } from './bruteForce.js';
 import type { Config } from './config.js';
 import type { SecretBox } from './crypto.js';
@@ -129,6 +130,7 @@ export interface AppContext {
   mailer: Mailer;
   settings: Settings;
   updates: UpdateChecker;
+  backups: BackupService;
 }
 
 export function publicUser(u: UserRow) {

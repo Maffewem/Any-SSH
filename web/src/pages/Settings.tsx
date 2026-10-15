@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { del, errorMessage, formatTime, get, post, put, type SettingsView } from '../api';
 import { Field, Form, useAsync } from '../ui';
+import { BackupSection } from './Backups';
 import { JumpHostsSection } from './JumpHosts';
 import { VersionCard } from './Version';
 
@@ -45,6 +46,7 @@ export function SettingsPage() {
           <LimitsSection key={`limits-${resets}`} view={current} onSaved={onSaved} />
           <JumpHostsSection />
           <SecuritySection key={`security-${resets}`} view={current} onSaved={onSaved} />
+          <BackupSection key={`backup-${resets}`} view={current} onSaved={onSaved} />
           <VersionCard />
         </>
       )}

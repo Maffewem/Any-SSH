@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BackupFormatError, backupKeyId, parsePublicKey } from './backup/format.js';
 import type { Config, SmtpConfig } from './config.js';
 import type { SecretBox } from './crypto.js';
 import type { DB } from './db.js';
@@ -58,7 +59,7 @@ export const securitySettingsSchema = z.object({
   notifyOwner: z.boolean(),
 });
 
-export type SettingsGroup = 'mail' | 'sessions' | 'limits' | 'security';
+export type SettingsGroup = 'mail' | 'sessions' | 'limits' | 'security' | 'backup';
 export type SettingsSource = 'environment' | 'web';
 
 export const settingContext = (id: string) => `setting:${id}`;
@@ -105,6 +106,108 @@ export const mailSettingsSchema = z.object({
   from: z.string().trim().min(3).max(320).regex(/^[^\r\n]+$/, 'One line only'),
 });
 export type MailSettingsInput = z.infer<typeof mailSettingsSchema>;
+
+
+// ---- Backups ----
+
+export type BackupFrequency = 'hourly' | 'daily' | 'weekly';
+
+export type BackupTargetSettings =
+  | { kind: 'none' }
+  | { kind: 'local' }
+  | { kind: 's3'; endpoint: string; region: string; bucket: string; prefix: string; accessKeyId: string; pathStyle: boolean }
+  | { kind: 'sftp'; host: string; port: number; username: string; path: string; hostKeyFingerprint: string };
+
+export interface BackupSettings {
+  /** Run on a schedule. Manual runs and the CLI work whenever a key and destination are set. */
+  enabled: boolean;
+  frequency: BackupFrequency;
+  hourUtc: number;
+  /** 0 = Sunday. Used for weekly backups. */
+  weekday: number;
+  /** How many backups to keep at the destination. */
+  keep: number;
+  /** Recovery public key backups are encrypted to ('' = not set). */
+  publicKey: string;
+  target: BackupTargetSettings;
+}
+
+export interface BackupSecrets {
+  s3SecretKey?: string;
+  sftpPassword?: string;
+  sftpPrivateKey?: string;
+}
+
+const DEFAULT_BACKUP: BackupSettings = { enabled: false, frequency: 'daily', hourUtc: 3, weekday: 0, keep: 14, publicKey: '', target: { kind: 'none' } };
+
+const backupHost = z.string().trim().min(1).max(253).regex(/^[A-Za-z0-9.:-]+$/, 'Enter a hostname or IP address');
+
+const backupTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('none') }),
+  z.object({ kind: z.literal('local') }),
+  z.object({
+    kind: z.literal('s3'),
+    /** Blank = AWS S3 in `region`. */
+    endpoint: z
+      .string()
+      .trim()
+      .max(300)
+      .regex(/^(https?:\/\/[A-Za-z0-9.:-]+\/?)?$/, 'Enter the endpoint as https://host (no path), or leave it empty for AWS')
+      .transform((v) => v.replace(/\/$/, ''))
+      .default(''),
+    region: z.string().trim().regex(/^[a-z0-9-]{2,30}$/, 'For example us-east-1').default('us-east-1'),
+    bucket: z.string().trim().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'Enter the bucket name'),
+    prefix: z
+      .string()
+      .trim()
+      .max(200)
+      .regex(/^[A-Za-z0-9._/-]*$/, 'Letters, numbers and . _ - / only')
+      .transform((v) => v.replace(/^\/+|\/+$/g, ''))
+      .default(''),
+    accessKeyId: z.string().trim().min(1).max(128).regex(/^[\w\-./+=@]+$/, 'Enter the access key ID'),
+    /** Omitted = keep the stored one; '' = remove it. */
+    secretKey: z.string().max(256).optional(),
+    pathStyle: z.boolean().default(false),
+  }),
+  z.object({
+    kind: z.literal('sftp'),
+    host: backupHost,
+    port: z.number().int().min(1).max(65535).default(22),
+    username: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/, 'Enter the SFTP username'),
+    path: z.string().trim().min(1).max(300).regex(/^[^\u0000-\u001f]+$/, 'Enter the folder to store backups in'),
+    /** "SHA256:…" of the server's host key. Required before any connection is made. */
+    hostKeyFingerprint: z.string().trim().regex(/^(SHA256:[A-Za-z0-9+/]{43})?$/, 'Enter it as SHA256:… (as shown by ssh-keygen -lf)').default(''),
+    password: z.string().max(1024).optional(),
+    privateKey: z.string().max(20_000).optional(),
+  }),
+]);
+
+export const backupSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    frequency: z.enum(['hourly', 'daily', 'weekly']).default('daily'),
+    hourUtc: z.number().int().min(0).max(23).default(3),
+    weekday: z.number().int().min(0).max(6).default(0),
+    keep: z.number().int().min(1).max(365).default(14),
+    publicKey: z.string().trim().max(200).default(''),
+    target: backupTargetSchema,
+  })
+  .superRefine((v, ctx) => {
+    if (v.publicKey) {
+      try {
+        parsePublicKey(v.publicKey);
+      } catch (err) {
+        ctx.addIssue({ code: 'custom', path: ['publicKey'], message: err instanceof BackupFormatError ? err.message : 'Invalid key' });
+      }
+    }
+    if (v.target.kind !== 'none' && !v.publicKey) {
+      ctx.addIssue({ code: 'custom', path: ['publicKey'], message: 'Set a recovery key first: backups are always encrypted.' });
+    }
+    if (v.enabled && v.target.kind === 'none') {
+      ctx.addIssue({ code: 'custom', path: ['target'], message: 'Choose where scheduled backups go.' });
+    }
+  });
+export type BackupSettingsInput = z.infer<typeof backupSettingsSchema>;
 
 interface StoredMail {
   enabled: boolean;
@@ -182,6 +285,66 @@ export class Settings {
     return { maxTerminalsPerUser: this.env.maxTerminalsPerUser, detachMinutes: this.env.detachMinutes };
   }
 
+
+  get backup(): BackupSettings {
+    const row = this.row('backup');
+    return row ? { ...DEFAULT_BACKUP, ...(JSON.parse(row.value) as BackupSettings) } : DEFAULT_BACKUP;
+  }
+
+  backupSecrets(): BackupSecrets {
+    const row = this.row('backup');
+    return row?.value_enc ? (JSON.parse(this.box.openString(row.value_enc, settingContext('backup'))) as BackupSecrets) : {};
+  }
+
+  /**
+   * Saves backup settings. A stored secret is kept only while the destination it belongs to is unchanged, so a
+   * hijacked admin session cannot re-point backups at its own storage and reuse the saved credentials.
+   * Returns the names of the fields that changed (for the audit log).
+   */
+  setBackup(input: BackupSettingsInput, actorId: string): { changed: string[]; changes: Record<string, { from: unknown; to: unknown }> } {
+    const before = this.backup;
+    const old = this.backupSecrets();
+    const t = input.target;
+    const secrets: BackupSecrets = {};
+    let target: BackupTargetSettings;
+    if (t.kind === 's3') {
+      const { secretKey, ...rest } = t;
+      target = rest;
+      const b = before.target;
+      const same = b.kind === 's3' && b.endpoint === t.endpoint && b.region === t.region && b.bucket === t.bucket && b.accessKeyId === t.accessKeyId;
+      const secret = secretKey !== undefined ? secretKey : same ? old.s3SecretKey : undefined;
+      if (secret) secrets.s3SecretKey = secret;
+    } else if (t.kind === 'sftp') {
+      const { password, privateKey, ...rest } = t;
+      target = rest;
+      const b = before.target;
+      const same = b.kind === 'sftp' && b.host === t.host && b.port === t.port && b.username === t.username;
+      const pass = password !== undefined ? password : same ? old.sftpPassword : undefined;
+      const key = privateKey !== undefined ? privateKey : same ? old.sftpPrivateKey : undefined;
+      if (pass) secrets.sftpPassword = pass;
+      if (key) secrets.sftpPrivateKey = key;
+    } else {
+      target = t;
+    }
+    const stored: BackupSettings = { enabled: input.enabled, frequency: input.frequency, hourUtc: input.hourUtc, weekday: input.weekday, keep: input.keep, publicKey: input.publicKey, target };
+    this.write('backup', JSON.stringify(stored), Object.keys(secrets).length ? this.box.seal(JSON.stringify(secrets), settingContext('backup')) : null, actorId);
+
+    // Names and old/new values of what changed. Secrets are reported only as present or absent.
+    const changed: string[] = [];
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    const note = (name: string, from: unknown, to: unknown) => {
+      if (from === to) return;
+      changed.push(name);
+      changes[name] = { from, to };
+    };
+    for (const k of ['enabled', 'frequency', 'hourUtc', 'weekday', 'keep', 'publicKey'] as const) note(k, before[k], stored[k]);
+    const bt = before.target as Record<string, unknown>;
+    const at = target as Record<string, unknown>;
+    for (const k of new Set([...Object.keys(bt), ...Object.keys(at)])) note(k === 'kind' ? 'destination' : `destination.${k}`, bt[k], at[k]);
+    for (const k of ['s3SecretKey', 'sftpPassword', 'sftpPrivateKey'] as const) note(k, !!old[k], !!secrets[k]);
+    return { changed, changes };
+  }
+
   get security(): SecuritySettings {
     const row = this.row('security');
     return row ? { ...DEFAULT_SECURITY, ...(JSON.parse(row.value) as Partial<SecuritySettings>) } : DEFAULT_SECURITY;
@@ -215,6 +378,29 @@ export class Settings {
       sessions: { source: this.source('sessions'), ...this.sessions },
       limits: { source: this.source('limits'), ...this.limits },
       security: { source: this.source('security'), ...this.security },
+      backup: this.describeBackup(),
+    };
+  }
+
+
+  /** What the admin page shows. Secrets are reported only as present or absent. */
+  private describeBackup() {
+    const b = this.backup;
+    const secrets = this.backupSecrets();
+    return {
+      enabled: b.enabled,
+      frequency: b.frequency,
+      hourUtc: b.hourUtc,
+      weekday: b.weekday,
+      keep: b.keep,
+      publicKey: b.publicKey,
+      keyId: b.publicKey ? backupKeyId(b.publicKey) : null,
+      target:
+        b.target.kind === 's3'
+          ? { ...b.target, hasSecretKey: !!secrets.s3SecretKey }
+          : b.target.kind === 'sftp'
+            ? { ...b.target, hasPassword: !!secrets.sftpPassword, hasPrivateKey: !!secrets.sftpPrivateKey }
+            : b.target,
     };
   }
 
