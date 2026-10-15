@@ -133,6 +133,23 @@ export const emails = {
         footer,
     };
   },
+  hostKeyChanged(p: {
+    to: string; displayName: string; server: string; endpoint: string; attemptedBy: string;
+    expected: string; presented: string; presentedType: string;
+  }): MailMessage {
+    return {
+      to: p.to,
+      subject: `Any-SSH: host key CHANGED for ${p.server}`,
+      text:
+        `Hi ${p.displayName},\n\nThe server "${p.server}" (${p.endpoint}) presented a different host key from the one pinned in ` +
+        `Any-SSH, so the connection by ${p.attemptedBy} was refused.\n\n` +
+        `Pinned:    ${p.expected}\nPresented: ${p.presented} (${p.presentedType})\n\n` +
+        'If you reinstalled or re-keyed that server, check the new fingerprint on the server itself ' +
+        '(ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub) and accept it under Servers > Edit. ' +
+        'If not, someone may be intercepting connections to it: do not accept the new key.' +
+        footer,
+    };
+  },
   securityNotice(p: { to: string; displayName: string; what: string }): MailMessage {
     return {
       to: p.to,

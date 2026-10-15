@@ -25,6 +25,14 @@ export interface SettingsView {
   };
   sessions: { source: 'environment' | 'web'; lockMinutes: number; idleMinutes: number; maxHours: number };
   limits: { source: 'environment' | 'web'; maxTerminalsPerUser: number };
+  security: {
+    source: 'environment' | 'web';
+    accountThreshold: number;
+    ipThreshold: number;
+    windowMinutes: number;
+    lockoutMinutes: number;
+    notifyOwner: boolean;
+  };
   backup: BackupSettingsView;
 }
 
@@ -73,6 +81,28 @@ export type Access = 'owner' | 'manage' | 'use';
 export type ShareCredentials = 'owner' | 'own';
 export type AuthMethod = 'key' | 'password' | 'prompt';
 
+export interface HostKeyPin {
+  fingerprint: string;
+  type: string | null;
+  pinnedAt: number | null;
+  pinnedBy: string | null;
+}
+export interface HostKeyChange {
+  fingerprint: string;
+  type: string | null;
+  seenAt: number | null;
+}
+export interface HostKeyRow {
+  serverId: string;
+  name: string;
+  host: string;
+  port: number;
+  owner: { id: string; username: string; displayName: string };
+  hostKey: HostKeyPin | null;
+  hostKeyChange: HostKeyChange | null;
+  conflict: boolean;
+}
+
 export interface Server {
   id: string;
   name: string;
@@ -83,6 +113,9 @@ export interface Server {
   key: { id: string; name: string; fingerprint: string } | null;
   hasStoredPassword: boolean;
   hostKeyFingerprint: string | null;
+  hostKey: HostKeyPin | null;
+  /** A different key the server presented; connections stay refused until the owner accepts or dismisses it. */
+  hostKeyChange: HostKeyChange | null;
   notes: string;
   access: Access;
   credentials: ShareCredentials;

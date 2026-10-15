@@ -48,6 +48,7 @@ let origin: string;
 let owner: Client;
 let sharee: Client;
 let shareePassword: string;
+let ownerPassword: string;
 let serverId: string;
 let sshd: { port: number; close(): void };
 /** A key the fake sshd accepts but Any-SSH has never stored. */
@@ -63,6 +64,7 @@ beforeAll(async () => {
   const o = await createUser(built, admin, 'owner');
   const s = await createUser(built, admin, 'sharee');
   owner = o.client;
+  ownerPassword = o.password;
   sharee = s.client;
   shareePassword = s.password;
 
@@ -206,13 +208,40 @@ describe('terminal over WebSocket', () => {
     await owner.put(`/api/servers/${serverId}/shares/${shareeId}`, { permission: 'use', credentials: 'owner' });
   });
 
-  it('refuses a changed host key', async () => {
+  it('refuses a changed host key, parks it for the owner and emails once', async () => {
     built.ctx.db.prepare("UPDATE servers SET host_key_fingerprint = 'SHA256:not-the-real-one' WHERE id = ?").run(serverId);
+    const mailBefore = (built.ctx.mailer as unknown as { sent?: unknown[] }).sent?.length ?? 0;
     const t = await openTerminal(owner);
+    const changed = await t.next((m) => m.type === 'hostkey_changed');
+    expect(changed.expected).toBe('SHA256:not-the-real-one');
+    expect(String(changed.presented)).toMatch(/^SHA256:/);
+    expect(changed.isOwner).toBe(true);
     const err = await t.next((m) => m.type === 'error');
     expect(err.code).toBe('host_key_mismatch');
     const actions = (built.ctx.db.prepare('SELECT action FROM audit_log').all() as { action: string }[]).map((r) => r.action);
     expect(actions).toContain('ssh.host_key_mismatch');
+
+    const view = (await owner.get(`/api/servers/${serverId}`)).body.server;
+    expect(view.hostKeyChange.fingerprint).toBe(changed.presented);
+
+    // A retry with the same key does not email again.
+    const t2 = await openTerminal(owner);
+    await t2.next((m) => m.type === 'error');
+    const sent = (built.ctx.mailer as unknown as { sent?: { subject: string }[] }).sent;
+    if (sent) expect(sent.slice(mailBefore).filter((m) => /host key CHANGED/.test(m.subject)).length).toBeLessThanOrEqual(1);
+
+    // Accepting needs the exact fingerprint and the owner's password.
+    expect((await owner.post(`/api/servers/${serverId}/host-key/accept`, { fingerprint: 'SHA256:other', password: 'x' })).status).toBe(409);
+    expect((await owner.post(`/api/servers/${serverId}/host-key/accept`, { fingerprint: changed.presented, password: 'wrong-password-here' })).status).toBe(400);
+    expect((await sharee.post(`/api/servers/${serverId}/host-key/accept`, { fingerprint: changed.presented, password: 'x' })).status).toBe(403);
+    const ok = await owner.post(`/api/servers/${serverId}/host-key/accept`, { fingerprint: changed.presented, password: ownerPassword });
+    expect(ok.status).toBe(200);
+    expect(ok.body.server.hostKey.fingerprint).toBe(changed.presented);
+    expect(ok.body.server.hostKeyChange).toBeNull();
+
+    const t3 = await openTerminal(owner);
+    await t3.next((m) => m.type === 'ready');
+    t3.ws.close();
   });
 
   it('rejects reused tickets and foreign origins', async () => {

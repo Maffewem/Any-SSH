@@ -326,11 +326,13 @@ describe('backup settings', () => {
     expect(res.body.error).toMatch(/where backups go/);
   });
 
-  it('audits changes by field name only and emails a notice', async () => {
+  it('audits what changed (never secrets) and emails a notice', async () => {
     await admin.put('/api/admin/settings/backup', settingsBody());
     const row = built.ctx.db.prepare("SELECT details FROM audit_log WHERE action = 'admin.settings_change' AND target_id = 'backup' AND outcome = 'success'").get() as { details: string };
     expect(JSON.parse(row.details).changed).toEqual(expect.arrayContaining(['enabled', 'publicKey', 'destination']));
-    expect(row.details).not.toContain(keys.publicKey);
+    // The public key is not secret and is recorded; secrets only ever show as present or absent.
+    expect(JSON.parse(row.details).changes.publicKey).toEqual({ from: '', to: keys.publicKey });
+    expect(row.details).not.toContain(keys.secretKey);
   });
 });
 

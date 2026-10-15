@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { AuditLog } from './audit.js';
 import { BackupService } from './backup/service.js';
+import { BruteForce } from './bruteForce.js';
 import { registerBackupRoutes } from './routes/backup.js';
 import type { Config } from './config.js';
 import { SecretBox, randomToken } from './crypto.js';
@@ -69,7 +70,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   }
   const audit = new AuditLog(db);
   const ctx: AppContext = {
-    config, db, box, audit, sessions, terminals, mailer, settings,
+    config, db, box, audit, bruteForce: new BruteForce(db, settings, audit), sessions, terminals, mailer, settings,
     updates: new UpdateChecker(config, app.log, opts.updates),
     backups: new BackupService({ db, settings, box, audit, mailer, config, log: app.log }),
   };
@@ -166,7 +167,10 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
     ctx.updates.start();
     ctx.backups.start();
   }
-  const purge = setInterval(() => sessions.purgeExpired(), 10 * 60_000);
+  const purge = setInterval(() => {
+    sessions.purgeExpired();
+    ctx.bruteForce.purge();
+  }, 10 * 60_000);
   purge.unref();
   app.addHook('onClose', async () => {
     clearInterval(purge);

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { notify } from '../accountTokens.js';
+import { recordReauthFailure } from '../bruteForce.js';
 import { BackupConfigError } from '../backup/service.js';
 import { generateBackupKeyPair } from '../backup/format.js';
 import { badRequest, clientIp, parse, requireAdmin } from '../http.js';
@@ -23,11 +24,12 @@ export function registerBackupRoutes(app: FastifyInstance, ctx: AppContext): voi
     const { currentPassword, ...body } = parse(backupSettingsSchema.and(z.object({ currentPassword: z.string().min(1).max(1024) })), req.body);
     const auditBase = { actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'backup', ip: clientIp(req) };
     if (!(await verifyPassword(user.password_hash, currentPassword))) {
+      recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ ...auditBase, outcome: 'failure', details: { reason: 'bad_password' } });
       throw badRequest('Password is incorrect.');
     }
-    const changed = settings.setBackup(body, user.id);
-    audit.record({ ...auditBase, details: { changed } });
+    const { changed, changes } = settings.setBackup(body, user.id);
+    audit.record({ ...auditBase, details: { changed, changes } });
     if (changed.length) notify(ctx, req.log, user, `backup settings were changed (${changed.join(', ')})`);
     return settings.describe();
   });

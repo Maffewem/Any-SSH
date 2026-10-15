@@ -30,7 +30,34 @@ export interface LimitSettings {
   maxTerminalsPerUser: number;
 }
 
-export type SettingsGroup = 'mail' | 'sessions' | 'limits' | 'backup';
+export interface SecuritySettings {
+  /** Failed attempts on one account inside the window that lock it. */
+  accountThreshold: number;
+  /** Failed attempts from one address inside the window that block it. */
+  ipThreshold: number;
+  windowMinutes: number;
+  lockoutMinutes: number;
+  /** Email the account owner when their account is locked. */
+  notifyOwner: boolean;
+}
+
+export const DEFAULT_SECURITY: SecuritySettings = {
+  accountThreshold: 5,
+  ipThreshold: 30,
+  windowMinutes: 15,
+  lockoutMinutes: 15,
+  notifyOwner: true,
+};
+
+export const securitySettingsSchema = z.object({
+  accountThreshold: z.number().int().min(3).max(100),
+  ipThreshold: z.number().int().min(3).max(1000),
+  windowMinutes: z.number().int().min(1).max(24 * 60),
+  lockoutMinutes: z.number().int().min(1).max(7 * 24 * 60),
+  notifyOwner: z.boolean(),
+});
+
+export type SettingsGroup = 'mail' | 'sessions' | 'limits' | 'security' | 'backup';
 export type SettingsSource = 'environment' | 'web';
 
 export const settingContext = (id: string) => `setting:${id}`;
@@ -268,7 +295,7 @@ export class Settings {
    * hijacked admin session cannot re-point backups at its own storage and reuse the saved credentials.
    * Returns the names of the fields that changed (for the audit log).
    */
-  setBackup(input: BackupSettingsInput, actorId: string): string[] {
+  setBackup(input: BackupSettingsInput, actorId: string): { changed: string[]; changes: Record<string, { from: unknown; to: unknown }> } {
     const before = this.backup;
     const old = this.backupSecrets();
     const t = input.target;
@@ -296,14 +323,25 @@ export class Settings {
     const stored: BackupSettings = { enabled: input.enabled, frequency: input.frequency, hourUtc: input.hourUtc, weekday: input.weekday, keep: input.keep, publicKey: input.publicKey, target };
     this.write('backup', JSON.stringify(stored), Object.keys(secrets).length ? this.box.seal(JSON.stringify(secrets), settingContext('backup')) : null, actorId);
 
-    const changed: string[] = (['enabled', 'frequency', 'hourUtc', 'weekday', 'keep', 'publicKey'] as const).filter((k) => before[k] !== stored[k]);
+    // Names and old/new values of what changed. Secrets are reported only as present or absent.
+    const changed: string[] = [];
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    const note = (name: string, from: unknown, to: unknown) => {
+      if (from === to) return;
+      changed.push(name);
+      changes[name] = { from, to };
+    };
+    for (const k of ['enabled', 'frequency', 'hourUtc', 'weekday', 'keep', 'publicKey'] as const) note(k, before[k], stored[k]);
     const bt = before.target as Record<string, unknown>;
     const at = target as Record<string, unknown>;
-    for (const k of new Set([...Object.keys(bt), ...Object.keys(at)])) if (bt[k] !== at[k]) changed.push(k === 'kind' ? 'destination' : `destination.${k}`);
-    for (const k of ['s3SecretKey', 'sftpPassword', 'sftpPrivateKey'] as const) {
-      if (old[k] !== secrets[k]) changed.push(secrets[k] ? k : `${k}_cleared`);
-    }
-    return changed;
+    for (const k of new Set([...Object.keys(bt), ...Object.keys(at)])) note(k === 'kind' ? 'destination' : `destination.${k}`, bt[k], at[k]);
+    for (const k of ['s3SecretKey', 'sftpPassword', 'sftpPrivateKey'] as const) note(k, !!old[k], !!secrets[k]);
+    return { changed, changes };
+  }
+
+  get security(): SecuritySettings {
+    const row = this.row('security');
+    return row ? { ...DEFAULT_SECURITY, ...(JSON.parse(row.value) as Partial<SecuritySettings>) } : DEFAULT_SECURITY;
   }
 
   // Getters in the shape SessionStore reads, so changes apply without a restart.
@@ -333,6 +371,7 @@ export class Settings {
       },
       sessions: { source: this.source('sessions'), ...this.sessions },
       limits: { source: this.source('limits'), ...this.limits },
+      security: { source: this.source('security'), ...this.security },
       backup: this.describeBackup(),
     };
   }
@@ -364,7 +403,7 @@ export class Settings {
    * Changing the server or username drops a stored password unless a new one is given, so a
    * hijacked admin session cannot point SMTP at its own server and collect the old password.
    */
-  setMail(input: MailSettingsInput, actorId: string): string[] {
+  setMail(input: MailSettingsInput, actorId: string): { changed: string[]; changes: Record<string, { from: unknown; to: unknown }> } {
     if (input.enabled && !input.host) throw new Error('Enter the SMTP server.');
     const before = this.describe().mail;
     const row = this.row('mail');
@@ -395,7 +434,10 @@ export class Settings {
     const changed: string[] = (['enabled', 'host', 'port', 'security', 'username', 'from'] as const).filter((k) => before[k] !== after[k]);
     if (input.password !== undefined) changed.push('password');
     else if (before.hasPassword && !after.hasPassword) changed.push('password_cleared');
-    return changed;
+    // Old → new for the audit log. The password is never included, only whether it changed.
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    for (const k of changed) if (k in before) changes[k] = { from: before[k as keyof typeof before], to: after[k as keyof typeof after] };
+    return { changed, changes };
   }
 
   setSessions(input: SessionSettings, actorId: string): void {
@@ -406,7 +448,11 @@ export class Settings {
     this.write('limits', JSON.stringify(limitSettingsSchema.parse(input)), null, actorId);
   }
 
-  /** Back to the environment's values. */
+  setSecurity(input: SecuritySettings, actorId: string): void {
+    this.write('security', JSON.stringify(securitySettingsSchema.parse(input)), null, actorId);
+  }
+
+  /** Back to the environment's values (the built-in defaults for the security group). */
   reset(group: SettingsGroup): void {
     this.db.prepare('DELETE FROM settings WHERE id = ?').run(group);
     this.changed(group);
