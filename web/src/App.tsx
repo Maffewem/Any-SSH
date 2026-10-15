@@ -7,7 +7,9 @@ import { SettingsPage } from './pages/Settings';
 import { ForcePasswordChangePage, IpChallengePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
 import { KeysPage } from './pages/Keys';
 import { ServersPage } from './pages/Servers';
-import { TerminalSession, type TerminalState } from './terminal/TerminalSession';
+import { remove, split, leaves, type Layout } from './terminal/layout';
+import type { TerminalState } from './terminal/TerminalSession';
+import { TerminalTab, tabState, type TabModel } from './terminal/TerminalTab';
 
 type Page = 'servers' | 'keys' | 'account' | 'users' | 'audit' | 'hostkeys' | 'settings';
 type Boot =
@@ -19,14 +21,7 @@ type Boot =
   | { kind: 'ipchallenge' }
   | { kind: 'app'; user: User };
 
-interface OpenTerminal {
-  tabId: string;
-  server: Server;
-  /** Credentials chosen for this tab; absent means the server's saved ones. Memory only. */
-  choice?: ConnectChoice;
-  attempt: number;
-  state: TerminalState;
-}
+type OpenTerminal = TabModel;
 
 /** Token from an emailed link (#/reset?token=… or #/welcome?token=…), if this is one. */
 function linkTokenFromHash(): string | null {
@@ -137,15 +132,40 @@ export function App() {
 
   const connect = (server: Server, choice?: ConnectChoice) => {
     const tabId = crypto.randomUUID();
-    setTerminals((ts) => [...ts, { tabId, server, choice, attempt: 0, state: 'connecting' }]);
+    const pane = crypto.randomUUID();
+    setTerminals((ts) => [
+      ...ts,
+      { tabId, server, choice, layout: { kind: 'pane', id: pane }, panes: { [pane]: { attempt: 0, state: 'connecting' } }, focused: pane },
+    ]);
     setActiveTab(tabId);
   };
   const closeTab = (tabId: string) => {
     setTerminals((ts) => ts.filter((t) => t.tabId !== tabId));
     if (activeTab === tabId) setActiveTab(null);
   };
-  const updateTab = (tabId: string, change: Partial<OpenTerminal>) =>
-    setTerminals((ts) => ts.map((t) => (t.tabId === tabId ? { ...t, ...change } : t)));
+  const updateTab = (tabId: string, change: (t: OpenTerminal) => Partial<OpenTerminal>) =>
+    setTerminals((ts) => ts.map((t) => (t.tabId === tabId ? { ...t, ...change(t) } : t)));
+  const setPane = (tabId: string, paneId: string, change: Partial<OpenTerminal['panes'][string]>) =>
+    updateTab(tabId, (t) => (t.panes[paneId] ? { panes: { ...t.panes, [paneId]: { ...t.panes[paneId]!, ...change } } } : {}));
+  /** Another terminal to the same server with the same credentials, next to the one in `paneId`. */
+  const splitPane = (tabId: string, paneId: string, dir: 'row' | 'col') => {
+    const fresh = crypto.randomUUID();
+    updateTab(tabId, (t) => ({
+      layout: split(t.layout, paneId, dir, fresh),
+      panes: { ...t.panes, [fresh]: { attempt: 0, state: 'connecting' } },
+      focused: fresh,
+    }));
+  };
+  const closePane = (tabId: string, paneId: string) =>
+    updateTab(tabId, (t) => {
+      const layout: Layout = remove(t.layout, paneId);
+      const { [paneId]: _gone, ...panes } = t.panes;
+      return { layout, panes, focused: t.focused === paneId ? leaves(layout)[0]! : t.focused };
+    });
+  const reconnectTab = (tabId: string) =>
+    updateTab(tabId, (t) => ({
+      panes: Object.fromEntries(Object.entries(t.panes).map(([id, p]) => [id, p.state === 'closed' ? { attempt: p.attempt + 1, state: 'connecting' as TerminalState } : p])),
+    }));
 
   const nav: { id: Page; label: string; admin?: boolean }[] = [
     { id: 'servers', label: 'Servers' },
@@ -193,11 +213,11 @@ export function App() {
           {terminals.map((t) => (
             <div key={t.tabId} className={`terminal-tab ${activeTab === t.tabId ? 'current' : ''}`} role="tab" aria-selected={activeTab === t.tabId}>
               <button className="tab-label" onClick={() => setActiveTab(t.tabId)}>
-                <span className={`dot ${t.state}`} />
+                <span className={`dot ${tabState(t)}`} />
                 {t.server.name}
               </button>
-              {t.state === 'closed' && (
-                <button className="ghost" title="Reconnect" onClick={() => (updateTab(t.tabId, { attempt: t.attempt + 1 }), setActiveTab(t.tabId))}>
+              {Object.values(t.panes).some((p) => p.state === 'closed') && (
+                <button className="ghost" title="Reconnect" onClick={() => (reconnectTab(t.tabId), setActiveTab(t.tabId))}>
                   ↻
                 </button>
               )}
@@ -211,18 +231,19 @@ export function App() {
 
       <main className={showingTerminal ? 'terminal-main' : 'content'}>
         {terminals.map((t) => (
-          <TerminalSession
+          <TerminalTab
             key={t.tabId}
-            server={t.server}
-            choice={t.choice}
-            attempt={t.attempt}
+            tab={t}
             active={activeTab === t.tabId}
-            onState={(state) => updateTab(t.tabId, { state })}
+            onPaneState={(paneId, state) => setPane(t.tabId, paneId, { state })}
+            onFocus={(paneId) => t.focused !== paneId && updateTab(t.tabId, () => ({ focused: paneId }))}
+            onSplit={(paneId, dir) => splitPane(t.tabId, paneId, dir)}
+            onClosePane={(paneId) => closePane(t.tabId, paneId)}
           />
         ))}
         {!showingTerminal && (
           <>
-            {page === 'servers' && <ServersPage onConnect={connect} />}
+            {page === 'servers' && <ServersPage onConnect={connect} isAdmin={user.role === 'admin'} />}
             {page === 'keys' && <KeysPage />}
             {page === 'account' && <AccountPage user={user} onUserChange={(u) => setBoot({ kind: 'app', user: u })} />}
             {page === 'users' && user.role === 'admin' && <AdminUsersPage me={user} />}

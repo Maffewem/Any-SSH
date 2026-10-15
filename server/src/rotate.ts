@@ -4,12 +4,14 @@ import { keyContext } from './routes/keys.js';
 import { serverPasswordContext } from './routes/servers.js';
 import { settingContext } from './settings.js';
 
+export const jumpHostContext = (id: string) => `jump_host:${id}:private`;
 const totpContext = (userId: string) => `user:${userId}:totp`;
 
 /** Every sealed column, with the AAD context each row was sealed under. */
 const SEALED_COLUMNS = [
   { table: 'ssh_keys', column: 'private_key_enc', context: keyContext },
   { table: 'servers', column: 'password_enc', context: serverPasswordContext },
+  { table: 'jump_hosts', column: 'private_key_enc', context: jumpHostContext },
   { table: 'users', column: 'totp_secret_enc', context: totpContext },
   { table: 'settings', column: 'value_enc', context: settingContext },
 ] as const;

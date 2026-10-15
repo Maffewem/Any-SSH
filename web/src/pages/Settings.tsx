@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { del, errorMessage, formatTime, get, post, put, type SettingsView } from '../api';
 import { Field, Form, useAsync } from '../ui';
 import { BackupSection } from './Backups';
+import { JumpHostsSection } from './JumpHosts';
 import { VersionCard } from './Version';
 
 function SourceBadge({ source }: { source: 'environment' | 'web' }) {
@@ -43,6 +44,7 @@ export function SettingsPage() {
           <MailSection key={`mail-${resets}`} view={current} onSaved={onSaved} />
           <SessionSection key={`sessions-${resets}`} view={current} onSaved={onSaved} />
           <LimitsSection key={`limits-${resets}`} view={current} onSaved={onSaved} />
+          <JumpHostsSection />
           <SecuritySection key={`security-${resets}`} view={current} onSaved={onSaved} />
           <BackupSection key={`backup-${resets}`} view={current} onSaved={onSaved} />
           <VersionCard />
@@ -234,6 +236,7 @@ function SessionSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Se
 function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
   const l = view.limits;
   const [max, setMax] = useState(String(l.maxTerminalsPerUser));
+  const [detach, setDetach] = useState(String(l.detachMinutes));
   const [saved, setSaved] = useState(false);
   return (
     <div className="card settings-section">
@@ -247,12 +250,18 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
         submit="Save limits"
         onSubmit={async () => {
           setSaved(false);
-          onSaved(await put<SettingsView>('/api/admin/settings/limits', { maxTerminalsPerUser: Number(max) }));
+          onSaved(await put<SettingsView>('/api/admin/settings/limits', { maxTerminalsPerUser: Number(max), detachMinutes: Number(detach) }));
           setSaved(true);
         }}
       >
         <Field label="Open terminals per user">
           <input value={max} onChange={(e) => setMax(e.target.value)} inputMode="numeric" required />
+        </Field>
+        <Field
+          label="Keep a terminal after the browser drops (minutes)"
+          hint="The SSH session stays open this long so the browser can pick up where it left off. 0 closes it straight away. Logging out, expiry and removed access still end it at once."
+        >
+          <input value={detach} onChange={(e) => setDetach(e.target.value)} inputMode="numeric" required />
         </Field>
         {saved && <p className="ok">Saved.</p>}
       </Form>

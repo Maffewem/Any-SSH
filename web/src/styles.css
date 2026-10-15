@@ -147,8 +147,19 @@ td.details { max-width: 360px; overflow-wrap: anywhere; color: var(--muted); }
 .dot.connected { background: var(--accent); }
 .dot.connecting { background: var(--warn); }
 .dot.closed { background: var(--danger); }
+.dot.reconnecting { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
 .terminal-main { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0b0f14; }
-.terminal-session { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pane-area { position: relative; flex: 1; min-height: 0; }
+.pane-area[hidden] { display: none; }
+.pane { position: absolute; padding: 1px; box-sizing: border-box; min-width: 0; min-height: 0; }
+.terminal-session { position: relative; height: 100%; display: flex; flex-direction: column; border: 1px solid transparent; box-sizing: border-box; min-height: 0; }
+.pane-area .pane:not(:only-child) .terminal-session { border-color: var(--border); }
+.pane-area .pane:not(:only-child) .terminal-session.focused { border-color: var(--accent); }
+.pane-tools { position: absolute; top: 4px; right: 14px; z-index: 5; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
+.terminal-session:hover .pane-tools, .terminal-session.focused .pane-tools { opacity: 0.85; }
+.pane-tools button { min-height: 28px; min-width: 28px; padding: 0 0.4rem; font-size: 0.85rem; background: var(--surface); }
+.terminal-session:not(.focused) .extra-keys { display: none !important; }
 .terminal-host { flex: 1; min-height: 0; padding: 4px 0 4px 6px; padding-left: max(6px, env(safe-area-inset-left)); }
 /* xterm draws its scrollbar at the right edge of its own element, so that element runs to the
    edge of the page and the text, not the scrollbar, is inset. */
