@@ -172,7 +172,8 @@ update_app() {
   local mode="$1" old_id new_id image tmp trigger=manual from to
   [ "$mode" = update-if-newer ] && trigger=auto
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  # Expand now: the EXIT trap runs after this function returns, when the local $tmp is gone (set -u).
+  trap "rm -rf '$tmp'" EXIT
   old_id="$(image_id)"
   from="$(image_label "$old_id")"
   image="$(app_image)"
