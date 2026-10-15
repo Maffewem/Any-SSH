@@ -177,6 +177,17 @@ const MIGRATIONS: string[] = [
   );
   `,
   `
+  -- What the pinned host key is and who trusted it, for the owner and the admin host key view.
+  ALTER TABLE servers ADD COLUMN host_key_type TEXT;
+  ALTER TABLE servers ADD COLUMN host_key_pinned_at INTEGER;
+  ALTER TABLE servers ADD COLUMN host_key_pinned_by TEXT;
+  -- A different key the server presented. Connections stay refused; it waits here until the owner
+  -- accepts it (re-entering their password) or dismisses it.
+  ALTER TABLE servers ADD COLUMN host_key_pending TEXT;
+  ALTER TABLE servers ADD COLUMN host_key_pending_type TEXT;
+  ALTER TABLE servers ADD COLUMN host_key_pending_at INTEGER;
+  `,
+  `
   -- Brute-force protection. One row per failed attempt (login, 2FA, unlock, reset, re-auth); rows
   -- age out of the counting window. ip_lockouts holds addresses that crossed the per-IP threshold.
   CREATE TABLE auth_failures (
