@@ -173,6 +173,7 @@ update_app() {
   [ "$mode" = update-if-newer ] && trigger=auto
   tmp="$(mktemp -d)"
   # Expand now: the EXIT trap runs after this function returns, when the local $tmp is gone (set -u).
+  # shellcheck disable=SC2064
   trap "rm -rf '$tmp'" EXIT
   old_id="$(image_id)"
   from="$(image_label "$old_id")"
