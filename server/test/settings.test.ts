@@ -150,8 +150,8 @@ describe('idle lock', () => {
     const last = await admin.post('/api/auth/unlock', { password: 'nope' });
     expect(last.body.code).toBe('unauthenticated');
     expect((await admin.post('/api/auth/unlock', { password: ADMIN_PASSWORD })).status).toBe(401);
-    // A full sign-in still works.
-    expect((await admin.post('/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD })).status).toBe(200);
+    // Unlock guesses count towards the account lockout, so the account is now locked too.
+    expect((await admin.post('/api/auth/login', { username: 'admin', password: ADMIN_PASSWORD })).status).toBe(401);
   });
 
   it('the state check is not activity, a heartbeat is', async () => {

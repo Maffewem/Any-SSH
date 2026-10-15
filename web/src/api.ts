@@ -25,6 +25,14 @@ export interface SettingsView {
   };
   sessions: { source: 'environment' | 'web'; lockMinutes: number; idleMinutes: number; maxHours: number };
   limits: { source: 'environment' | 'web'; maxTerminalsPerUser: number };
+  security: {
+    source: 'environment' | 'web';
+    accountThreshold: number;
+    ipThreshold: number;
+    windowMinutes: number;
+    lockoutMinutes: number;
+    notifyOwner: boolean;
+  };
 }
 
 export type Access = 'owner' | 'manage' | 'use';

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import ssh2 from 'ssh2';
 import { z } from 'zod';
 import { notify } from '../accountTokens.js';
+import { recordReauthFailure } from '../bruteForce.js';
 import { HttpError, badRequest, clientIp, idParam, notFound, parse, requireUser } from '../http.js';
 import { verifyPassword } from '../passwords.js';
 import { sshFingerprint } from '../ssh/fingerprint.js';
@@ -165,6 +166,7 @@ export function registerKeyRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (!key) throw notFound('Key not found');
     const auditBase = { actorId: user.id, actorUsername: user.username, action: 'key.export', targetType: 'ssh_key', targetId: id, ip: clientIp(req) };
     if (!(await verifyPassword(user.password_hash, password))) {
+      recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ ...auditBase, outcome: 'failure', details: { name: key.name, reason: 'bad_password' } });
       throw badRequest('Password is incorrect.');
     }
