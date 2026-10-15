@@ -206,6 +206,29 @@ const MIGRATIONS: string[] = [
     created_at    INTEGER NOT NULL
   );
   `,
+  `
+  -- Admin-defined bastions. Each has its own Any-SSH-generated key (the jump host never sees a
+  -- target's credentials: the target session runs end to end through it) and a pinned host key.
+  CREATE TABLE jump_hosts (
+    id                    TEXT PRIMARY KEY,
+    name                  TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    host                  TEXT NOT NULL,
+    port                  INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+    username              TEXT NOT NULL,
+    public_key            TEXT NOT NULL,
+    fingerprint           TEXT NOT NULL,
+    private_key_enc       TEXT NOT NULL,
+    host_key_fingerprint  TEXT,
+    enabled               INTEGER NOT NULL DEFAULT 1,
+    created_by            TEXT,
+    created_at            INTEGER NOT NULL,
+    updated_at            INTEGER NOT NULL
+  );
+  -- 'none': connect directly. 'auto': through the closest enabled jump host. 'fixed': through
+  -- jump_host_id, chosen by an admin. A 'fixed' server whose jump host is gone fails closed.
+  ALTER TABLE servers ADD COLUMN jump_mode TEXT NOT NULL DEFAULT 'none' CHECK (jump_mode IN ('none', 'auto', 'fixed'));
+  ALTER TABLE servers ADD COLUMN jump_host_id TEXT REFERENCES jump_hosts(id) ON DELETE SET NULL;
+  `,
 ];
 
 export function openDatabase(file: string): DB {

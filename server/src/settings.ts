@@ -27,6 +27,8 @@ export interface SessionSettings {
 
 export interface LimitSettings {
   maxTerminalsPerUser: number;
+  /** How long a terminal outlives a dropped browser connection. 0 = close at once. */
+  detachMinutes: number;
 }
 
 export interface SecuritySettings {
@@ -78,7 +80,10 @@ export const sessionSettingsSchema = z
     path: ['idleMinutes'],
   });
 
-export const limitSettingsSchema = z.object({ maxTerminalsPerUser: z.number().int().min(1).max(100) });
+export const limitSettingsSchema = z.object({
+  maxTerminalsPerUser: z.number().int().min(1).max(100),
+  detachMinutes: z.number().int().min(0).max(24 * 60),
+});
 
 const hostname = z
   .string()
@@ -127,7 +132,7 @@ export class Settings {
     private readonly box: SecretBox,
     private readonly env: Pick<
       Config,
-      'smtp' | 'mailFrom' | 'sessionLockMinutes' | 'sessionIdleMinutes' | 'sessionMaxHours' | 'maxTerminalsPerUser'
+      'smtp' | 'mailFrom' | 'sessionLockMinutes' | 'sessionIdleMinutes' | 'sessionMaxHours' | 'maxTerminalsPerUser' | 'detachMinutes'
     >,
   ) {}
 
@@ -172,8 +177,9 @@ export class Settings {
 
   get limits(): LimitSettings {
     const row = this.row('limits');
-    if (row) return JSON.parse(row.value) as LimitSettings;
-    return { maxTerminalsPerUser: this.env.maxTerminalsPerUser };
+    // Rows saved before detachMinutes existed fall back to the environment for it.
+    if (row) return { detachMinutes: this.env.detachMinutes, ...(JSON.parse(row.value) as Partial<LimitSettings>) } as LimitSettings;
+    return { maxTerminalsPerUser: this.env.maxTerminalsPerUser, detachMinutes: this.env.detachMinutes };
   }
 
   get security(): SecuritySettings {
