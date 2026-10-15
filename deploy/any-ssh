@@ -195,7 +195,7 @@ backup_tool() {
 
 restore_backup() {
   local file="${1:-}" key="${2:-}"
-  [ -n "$file" ] && [ -n "$key" ] || die "Usage: sudo any-ssh restore <backup file> <secret key file>"
+  if [ -z "$file" ] || [ -z "$key" ]; then die "Usage: sudo any-ssh restore <backup file> <secret key file>"; fi
   say "Checking the backup first (nothing is changed yet)"
   backup_tool "$file" "$key" --verify-only || die "The backup didn't pass, so nothing was changed."
   echo
@@ -357,7 +357,7 @@ case "${1:-help}" in
   backup) need_root backup; backup "${2:-}" ;;
   backup-key) dc run --rm --no-deps -T app node dist/cli/backup.js keygen ;;
   verify-backup)
-    [ -n "${2:-}" ] && [ -n "${3:-}" ] || die "Usage: any-ssh verify-backup <backup file> <secret key file>"
+    if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then die "Usage: any-ssh verify-backup <backup file> <secret key file>"; fi
     backup_tool "$2" "$3" --verify-only
     ;;
   restore) need_root restore; restore_backup "${2:-}" "${3:-}" ;;
