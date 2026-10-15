@@ -2,7 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { z } from 'zod';
-import { HttpError, badRequest, clientIp, forbidden, idParam, notFound, parse, requireUser } from '../http.js';
+import { notify } from '../accountTokens.js';
+import { HttpError, badRequest, clientIp, forbidden, idParam, notFound, parse, requireAdmin, requireUser } from '../http.js';
+import { verifyPassword } from '../passwords.js';
 import type { ConnectCredential } from '../ssh/registry.js';
 import type { AppContext, ServerAccess, ServerRow, ServerShareRow, ShareCredentials, SharePermission, SshKeyRow, UserRow } from '../types.js';
 import { inspectPrivateKey, normalisePrivateKey } from './keys.js';
@@ -77,6 +79,16 @@ export interface ServerGrant {
   canShare: boolean;
 }
 
+function hostKeyView(s: ServerRow) {
+  return s.host_key_fingerprint
+    ? { fingerprint: s.host_key_fingerprint, type: s.host_key_type, pinnedAt: s.host_key_pinned_at, pinnedBy: s.host_key_pinned_by }
+    : null;
+}
+
+function hostKeyChangeView(s: ServerRow) {
+  return s.host_key_pending ? { fingerprint: s.host_key_pending, type: s.host_key_pending_type, seenAt: s.host_key_pending_at } : null;
+}
+
 export function getServerAccess(ctx: AppContext, userId: string, serverId: string): ServerGrant | null {
   const server = ctx.db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId) as ServerRow | undefined;
   if (!server) return null;
@@ -118,6 +130,8 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       key: key ? { id: key.id, name: key.name, fingerprint: key.fingerprint } : null,
       hasStoredPassword: server.password_enc !== null,
       hostKeyFingerprint: server.host_key_fingerprint,
+      hostKey: hostKeyView(server),
+      hostKeyChange: hostKeyChangeView(server),
       notes: server.notes,
       access,
       credentials,
@@ -211,13 +225,16 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     // A different endpoint is a different machine: its host key must be verified afresh.
     const endpointChanged = host !== server.host || port !== server.port;
 
-    db.prepare(
-      `UPDATE servers SET name = ?, host = ?, port = ?, username = ?, auth_method = ?, key_id = ?, password_enc = ?,
-         host_key_fingerprint = ?, notes = ?, updated_at = ? WHERE id = ?`,
-    ).run(
-      body.name ?? server.name, host, port, body.username ?? server.username, authMethod, keyId, passwordEnc,
-      endpointChanged ? null : server.host_key_fingerprint, body.notes ?? server.notes, Date.now(), id,
-    );
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE servers SET name = ?, host = ?, port = ?, username = ?, auth_method = ?, key_id = ?, password_enc = ?,
+           notes = ?, updated_at = ? WHERE id = ?`,
+      ).run(
+        body.name ?? server.name, host, port, body.username ?? server.username, authMethod, keyId, passwordEnc,
+        body.notes ?? server.notes, Date.now(), id,
+      );
+      if (endpointChanged) clearHostKey(id);
+    })();
     const { password: _omit, ...logged } = body;
     audit.record({
       actorId: user.id, actorUsername: user.username, action: 'server.update', targetType: 'server', targetId: id,
@@ -239,16 +256,104 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     return { ok: true };
   });
 
+  // ---- Host keys ----
+  // Trust on first use is offered to the owner or a manager. After that, only the owner can let a
+  // different key in: by accepting the exact change Any-SSH recorded (with their password), or by
+  // forgetting the pin and verifying afresh.
+
+  function clearHostKey(id: string) {
+    db.prepare(
+      `UPDATE servers SET host_key_fingerprint = NULL, host_key_type = NULL, host_key_pinned_at = NULL, host_key_pinned_by = NULL,
+         host_key_pending = NULL, host_key_pending_type = NULL, host_key_pending_at = NULL WHERE id = ?`,
+    ).run(id);
+  }
+
   app.post('/api/servers/:id/forget-host-key', async (req) => {
     const { user } = requireUser(req);
     const { id } = parse(idParam, req.params);
-    const { server } = load(user.id, id, ['owner', 'manage']);
-    db.prepare('UPDATE servers SET host_key_fingerprint = NULL, updated_at = ? WHERE id = ?').run(Date.now(), id);
+    const { server } = load(user.id, id, ['owner']);
+    db.transaction(() => {
+      clearHostKey(id);
+      db.prepare('UPDATE servers SET updated_at = ? WHERE id = ?').run(Date.now(), id);
+    })();
     audit.record({
       actorId: user.id, actorUsername: user.username, action: 'server.host_key_forget', targetType: 'server', targetId: id,
-      ip: clientIp(req), details: { previous: server.host_key_fingerprint },
+      ip: clientIp(req), details: { host: server.host, port: server.port, previous: server.host_key_fingerprint, pending: server.host_key_pending },
     });
     return { ok: true };
+  });
+
+  app.post('/api/servers/:id/host-key/accept', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => {
+    const { user } = requireUser(req);
+    const { id } = parse(idParam, req.params);
+    const body = parse(z.object({ fingerprint: z.string().min(1).max(200), password: z.string().min(1).max(1024) }), req.body);
+    const { server } = load(user.id, id, ['owner']);
+    const auditBase = { actorId: user.id, actorUsername: user.username, action: 'server.host_key_accept', targetType: 'server', targetId: id, ip: clientIp(req) };
+    // Accept exactly the key that was shown, never whatever turned up since.
+    if (!server.host_key_pending || server.host_key_pending !== body.fingerprint) {
+      throw new HttpError(409, 'That host key change is no longer pending. Reload and review it again.', 'conflict');
+    }
+    if (!(await verifyPassword(user.password_hash, body.password))) {
+      audit.record({ ...auditBase, outcome: 'failure', details: { reason: 'bad_password', presented: body.fingerprint } });
+      throw badRequest('Password is incorrect.');
+    }
+    const now = Date.now();
+    db.prepare(
+      `UPDATE servers SET host_key_fingerprint = host_key_pending, host_key_type = host_key_pending_type, host_key_pinned_at = ?,
+         host_key_pinned_by = ?, host_key_pending = NULL, host_key_pending_type = NULL, host_key_pending_at = NULL, updated_at = ?
+       WHERE id = ? AND host_key_pending = ?`,
+    ).run(now, user.username, now, id, body.fingerprint);
+    audit.record({
+      ...auditBase,
+      details: { host: server.host, port: server.port, previous: server.host_key_fingerprint, fingerprint: body.fingerprint, keyType: server.host_key_pending_type },
+    });
+    notify(ctx, req.log, user, `you accepted a new host key for "${server.name}" (${server.host}:${server.port}): ${body.fingerprint}`);
+    return { server: view(getServerAccess(ctx, user.id, id)!) };
+  });
+
+  app.post('/api/servers/:id/host-key/dismiss', async (req) => {
+    const { user } = requireUser(req);
+    const { id } = parse(idParam, req.params);
+    const { server } = load(user.id, id, ['owner']);
+    if (!server.host_key_pending) return { server: view(getServerAccess(ctx, user.id, id)!) };
+    db.prepare('UPDATE servers SET host_key_pending = NULL, host_key_pending_type = NULL, host_key_pending_at = NULL WHERE id = ?').run(id);
+    audit.record({
+      actorId: user.id, actorUsername: user.username, action: 'server.host_key_dismiss', targetType: 'server', targetId: id,
+      ip: clientIp(req), details: { host: server.host, port: server.port, pinned: server.host_key_fingerprint, dismissed: server.host_key_pending },
+    });
+    return { server: view(getServerAccess(ctx, user.id, id)!) };
+  });
+
+  // Admins see every pinned fingerprint (no credentials, no access) so they can spot a host whose
+  // key changed, one nobody has verified, or the same host pinned to different keys by different people.
+  app.get('/api/admin/host-keys', async (req) => {
+    requireAdmin(req);
+    const rows = db
+      .prepare(
+        `SELECT s.*, u.username AS owner_username, u.display_name AS owner_display_name
+         FROM servers s JOIN users u ON u.id = s.owner_id ORDER BY lower(s.host), s.port, lower(s.name)`,
+      )
+      .all() as (ServerRow & { owner_username: string; owner_display_name: string })[];
+    const pinsByEndpoint = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (!r.host_key_fingerprint) continue;
+      const k = `${r.host.toLowerCase()}:${r.port}`;
+      if (!pinsByEndpoint.has(k)) pinsByEndpoint.set(k, new Set());
+      pinsByEndpoint.get(k)!.add(r.host_key_fingerprint);
+    }
+    return {
+      hosts: rows.map((r) => ({
+        serverId: r.id,
+        name: r.name,
+        host: r.host,
+        port: r.port,
+        owner: { id: r.owner_id, username: r.owner_username, displayName: r.owner_display_name },
+        hostKey: hostKeyView(r),
+        hostKeyChange: hostKeyChangeView(r),
+        // Another saved server for the same host and port trusts a different key.
+        conflict: (pinsByEndpoint.get(`${r.host.toLowerCase()}:${r.port}`)?.size ?? 0) > 1,
+      })),
+    };
   });
 
   // ---- Sharing ----

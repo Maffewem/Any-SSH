@@ -5,6 +5,7 @@ import type { ClientChannel, ConnectConfig } from 'ssh2';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
 import { clientIp } from '../http.js';
+import { emails } from '../mail.js';
 import { keyContext, type StoredPrivateKey } from '../routes/keys.js';
 import { getServerAccess, serverPasswordContext } from '../routes/servers.js';
 import type { AppContext, ServerRow, SshKeyRow } from '../types.js';
@@ -177,14 +178,48 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
     const fingerprint = sshFingerprint(key);
     const parsed = utils.parseKey(key);
     const keyType = parsed instanceof Error ? 'unknown' : (Array.isArray(parsed) ? parsed[0]?.type : parsed.type) ?? 'unknown';
-    // Re-read: the owner may have pinned or forgotten the key since the ticket was issued.
-    const current = db.prepare('SELECT host_key_fingerprint FROM servers WHERE id = ?').get(server.id) as
-      | Pick<ServerRow, 'host_key_fingerprint'>
-      | undefined;
+    // Re-read: the owner may have pinned, accepted or forgotten a key since the ticket was issued.
+    const current = db
+      .prepare('SELECT host_key_fingerprint, host_key_type, host_key_pending FROM servers WHERE id = ?')
+      .get(server.id) as Pick<ServerRow, 'host_key_fingerprint' | 'host_key_type' | 'host_key_pending'> | undefined;
     const pinned = current?.host_key_fingerprint ?? null;
     if (pinned) {
       if (pinned === fingerprint) return verify(true);
-      audit.record({ ...auditBase, action: 'ssh.host_key_mismatch', outcome: 'failure', details: { expected: pinned, presented: fingerprint } });
+      // Refused, always. The new key is parked for the owner to review; they are emailed the first
+      // time each different key shows up, not on every retry.
+      const firstSighting = current?.host_key_pending !== fingerprint;
+      if (firstSighting) {
+        db.prepare('UPDATE servers SET host_key_pending = ?, host_key_pending_type = ?, host_key_pending_at = ? WHERE id = ?').run(
+          fingerprint, keyType, Date.now(), server.id,
+        );
+        const owner = db.prepare('SELECT email, display_name FROM users WHERE id = ?').get(server.owner_id) as
+          | { email: string | null; display_name: string }
+          | undefined;
+        if (owner?.email) {
+          ctx.mailer
+            .send(
+              emails.hostKeyChanged({
+                to: owner.email, displayName: owner.display_name, server: server.name, endpoint: `${server.host}:${server.port}`,
+                attemptedBy: user.username, expected: pinned, presented: fingerprint, presentedType: keyType,
+              }),
+            )
+            .catch((err: unknown) => req.log.warn({ err }, 'Failed to send host key change email'));
+        }
+      }
+      audit.record({
+        ...auditBase, action: 'ssh.host_key_mismatch', outcome: 'failure',
+        details: { host: server.host, port: server.port, expected: pinned, presented: fingerprint, keyType, ownerNotified: firstSighting },
+      });
+      send({
+        type: 'hostkey_changed',
+        host: server.host,
+        port: server.port,
+        expected: pinned,
+        expectedType: current?.host_key_type ?? null,
+        presented: fingerprint,
+        presentedType: keyType,
+        isOwner: access === 'owner',
+      });
       send({
         type: 'error',
         code: 'host_key_mismatch',
@@ -204,12 +239,13 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
         send({ type: 'error', code: 'host_key_rejected', message: 'Host key not trusted. Connection cancelled.' });
         return verify(false);
       }
-      db.prepare('UPDATE servers SET host_key_fingerprint = ?, updated_at = ? WHERE id = ? AND host_key_fingerprint IS NULL').run(
-        fingerprint,
-        Date.now(),
-        server.id,
-      );
-      audit.record({ ...auditBase, action: 'ssh.host_key_trust', details: { fingerprint, keyType } });
+      const now = Date.now();
+      db.prepare(
+        `UPDATE servers SET host_key_fingerprint = ?, host_key_type = ?, host_key_pinned_at = ?, host_key_pinned_by = ?,
+           host_key_pending = NULL, host_key_pending_type = NULL, host_key_pending_at = NULL, updated_at = ?
+         WHERE id = ? AND host_key_fingerprint IS NULL`,
+      ).run(fingerprint, keyType, now, user.username, now, server.id);
+      audit.record({ ...auditBase, action: 'ssh.host_key_trust', details: { host: server.host, port: server.port, fingerprint, keyType } });
       verify(true);
     });
   };

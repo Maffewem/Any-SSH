@@ -176,6 +176,17 @@ const MIGRATIONS: string[] = [
     attempts      INTEGER NOT NULL DEFAULT 0
   );
   `,
+  `
+  -- What the pinned host key is and who trusted it, for the owner and the admin host key view.
+  ALTER TABLE servers ADD COLUMN host_key_type TEXT;
+  ALTER TABLE servers ADD COLUMN host_key_pinned_at INTEGER;
+  ALTER TABLE servers ADD COLUMN host_key_pinned_by TEXT;
+  -- A different key the server presented. Connections stay refused; it waits here until the owner
+  -- accepts it (re-entering their password) or dismisses it.
+  ALTER TABLE servers ADD COLUMN host_key_pending TEXT;
+  ALTER TABLE servers ADD COLUMN host_key_pending_type TEXT;
+  ALTER TABLE servers ADD COLUMN host_key_pending_at INTEGER;
+  `,
 ];
 
 export function openDatabase(file: string): DB {

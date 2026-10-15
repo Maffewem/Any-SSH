@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { del, formatTime, get, patch, post, type AuditEntry, type User } from '../api';
+import { del, formatTime, get, patch, post, type AuditEntry, type HostKeyRow, type User } from '../api';
 import { Field, Form, Modal, SecretOnce, useAsync } from '../ui';
 
 interface LinkResult {
@@ -321,6 +321,77 @@ export function AuditPage() {
         </table>
       </div>
       {entries.length > 0 && entries.length % 100 === 0 && <button onClick={more}>Load older</button>}
+    </section>
+  );
+}
+
+export function HostKeysPage() {
+  const { data, error } = useAsync(() => get<{ hosts: HostKeyRow[] }>('/api/admin/host-keys'), []);
+  return (
+    <section>
+      <div className="page-head">
+        <h1>Host keys</h1>
+      </div>
+      <p className="muted small">
+        The server fingerprint each saved server is pinned to. Admins can see these but cannot change them: only a server’s owner can
+        accept a new key. A changed key, or two servers pinned to different keys for the same host, deserves a look.
+      </p>
+      {error && <p className="error">{error}</p>}
+      <div className="table-wrap card">
+        <table className="small">
+          <thead>
+            <tr>
+              <th>Server</th>
+              <th>Owner</th>
+              <th>Pinned fingerprint</th>
+              <th>Trusted</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data?.hosts.map((h) => (
+              <tr key={h.serverId} className={h.hostKeyChange ? 'failure' : ''}>
+                <td>
+                  {h.name}
+                  <br />
+                  <span className="muted mono">
+                    {h.host}
+                    {h.port !== 22 ? `:${h.port}` : ''}
+                  </span>
+                </td>
+                <td>@{h.owner.username}</td>
+                <td className="mono details">
+                  {h.hostKey ? (
+                    <>
+                      {h.hostKey.type ?? ''} {h.hostKey.fingerprint}
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                  {h.hostKeyChange && (
+                    <>
+                      <br />
+                      <span className="error">Presented: {h.hostKeyChange.type ?? ''} {h.hostKeyChange.fingerprint}</span>
+                    </>
+                  )}
+                </td>
+                <td>{h.hostKey?.pinnedAt ? `${formatTime(h.hostKey.pinnedAt)}${h.hostKey.pinnedBy ? ` by ${h.hostKey.pinnedBy}` : ''}` : '—'}</td>
+                <td>
+                  {h.hostKeyChange ? (
+                    <span className="badge warn">Key changed</span>
+                  ) : !h.hostKey ? (
+                    <span className="badge">Not verified</span>
+                  ) : h.conflict ? (
+                    <span className="badge warn">Conflicts with another pin</span>
+                  ) : (
+                    'OK'
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

@@ -54,7 +54,7 @@ wrappers can come later.
   so a compromised admin session cannot silently open a shell on every server.
 - **Servers** belong to an owner. The owner can share a server with any number of users:
   - `use`: can connect. Cannot see or change host, username or credentials.
-  - `manage`: can also rename it, edit notes and forget the pinned host key.
+  - `manage`: can also rename it, edit notes and trust a server's host key on first use (but not replace a pinned one).
   - Only the owner can change connection details or credentials, grant `manage`, or delete. This stops a manager from
     re-pointing a server that stores a password at a machine they control and harvesting it.
 - **Re-sharing is off by default.** A `manage` grant carries a separate "can re-share" flag that only the owner can set.
@@ -125,10 +125,22 @@ and reset links directly so they can pass them on.
    `Origin` header is an allowed origin and that the session cookie is the one the ticket was issued to. This blocks
    cross-site WebSocket hijacking.
 3. **Host key verification (no blind trust).** The SHA-256 fingerprint of the server's host key is pinned per saved
-   server. On first connection the owner (or a manager) is shown the fingerprint and must explicitly trust it; people with
-   `use` access cannot trust on first use and are refused until the owner has. The ticket also carries which credentials
-   the connection uses (saved, one of the user's own keys, a one-off key, or a password prompt) and the SSH login name. A changed key is **refused**, shown as a
-   possible attack and audited. Changing a server's host or port clears the pin.
+   server, with its key type, when it was trusted and by whom.
+   - *First connection:* the owner (or a manager) is shown the fingerprint and key type and must explicitly trust it
+     (the dialog says how to check it on the server). People with `use` access cannot trust on first use and are refused
+     until the owner has.
+   - *A changed key is always refused.* The user sees a blocking dialog with the pinned and presented fingerprints side by
+     side, the owner is emailed (once per distinct new key, not per retry), and the attempt is audited as
+     `ssh.host_key_mismatch` with both fingerprints. The new key is parked on the server record as a pending change.
+   - *Accepting it is owner-only* (not managers, not admins), needs the owner's **account password**, and must name the exact
+     fingerprint that was shown, so a key that appears later cannot ride on an earlier review. Audited as
+     `server.host_key_accept` and the owner is emailed again. The owner can instead dismiss the change (`server.host_key_dismiss`),
+     or forget the pin to verify afresh (`server.host_key_forget`, owner-only).
+   - Changing a server's host or port clears the pin and any pending change.
+   - Admins get a read-only **Host keys** page listing every pinned fingerprint, who trusted it, any pending change, and
+     servers pinned to different keys for the same host and port. It exposes no credentials and grants no access.
+   The ticket also carries which credentials the connection uses (saved, one of the user's own keys, a one-off key, or a
+   password prompt) and the SSH login name.
 4. **SSRF guard.** The hostname is resolved once and the vetted IP is what we dial (no DNS rebinding window). Loopback,
    link-local (including cloud metadata `169.254.169.254`), unspecified and multicast addresses are refused unless
    `ANYSSH_ALLOW_LOOPBACK_TARGETS=true`. Private LAN ranges are allowed, since reaching them is the point.
