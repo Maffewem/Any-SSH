@@ -33,7 +33,18 @@ export interface SettingsView {
     lockoutMinutes: number;
     notifyOwner: boolean;
   };
+  maintenance: MaintenanceView;
   backup: BackupSettingsView;
+}
+
+export interface MaintenanceView {
+  source: 'environment' | 'web';
+  enabled: boolean;
+  /** 0 = Sunday … 6 = Saturday. */
+  days: number[];
+  start: string;
+  durationMinutes: number;
+  timezone: string;
 }
 
 export type BackupTargetView =

@@ -283,6 +283,10 @@ These are intentionally out of scope for this first pass:
 
 The only outbound call added for update checks is an anonymous, read-only request to the image registry (ghcr.io) for the
 image's labels, every ~6 hours; it can be disabled with `ANYSSH_UPDATE_CHECK=false`. The app never receives the Docker
-socket and cannot update itself: installing is done by `any-ssh update` or an opt-in systemd timer on the host, which back
-up first and roll back if the new image is unhealthy. Images are pulled by tag over TLS from the registry; they are not
+socket and cannot update itself: installing is done by `any-ssh update` or the opt-in update agent (a systemd timer on the host), which back
+up first and roll back if the new image is unhealthy. **Update now** only writes a request row to the database (admin only,
+rate-limited, audited as `admin.update_requested` / `admin.update_cancelled`); the agent, which already runs as root on the host,
+decides when to act on it. A compromised admin session can therefore trigger an update of the image the operator already follows,
+but cannot choose an image, run commands or reach Docker. The maintenance window is an admin setting (audited with old and new
+values) and limits only automatic updates. Images are pulled by tag over TLS from the registry; they are not
 signature-verified yet (a possible hardening: cosign signatures and pinning by digest).

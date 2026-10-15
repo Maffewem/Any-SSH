@@ -47,6 +47,7 @@ export function SettingsPage() {
           <JumpHostsSection />
           <SecuritySection key={`security-${resets}`} view={current} onSaved={onSaved} />
           <BackupSection key={`backup-${resets}`} view={current} onSaved={onSaved} />
+          <MaintenanceSection key={`maintenance-${resets}`} view={current} onSaved={onSaved} />
           <VersionCard />
         </>
       )}
@@ -349,6 +350,65 @@ function SecuritySection({ view, onSaved }: { view: SettingsView; onSaved: (s: S
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function MaintenanceSection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
+  const m = view.maintenance;
+  const [enabled, setEnabled] = useState(m.enabled);
+  const [days, setDays] = useState<number[]>(m.days);
+  const [start, setStart] = useState(m.start);
+  const [duration, setDuration] = useState(String(m.durationMinutes));
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [timezone, setTimezone] = useState(m.source === 'web' ? m.timezone : browserZone || m.timezone);
+  const [saved, setSaved] = useState(false);
+  return (
+    <div className="card settings-section">
+      <div className="page-head">
+        <h2>
+          Maintenance window <SourceBadge source={m.source} />
+        </h2>
+        <ResetButton group="maintenance" source={m.source} onDone={onSaved} />
+      </div>
+      <p className="muted small">
+        When automatic updates (<code>sudo any-ssh auto-update on</code>) may be installed. Outside the window a new version is only flagged as available.
+        Connected users are warned a couple of minutes before the restart. "Update now" is not limited by the window.
+      </p>
+      <Form
+        submit="Save window"
+        onSubmit={async () => {
+          setSaved(false);
+          onSaved(await put<SettingsView>('/api/admin/settings/maintenance', { enabled, days, start, durationMinutes: Number(duration), timezone: timezone.trim() }));
+          setSaved(true);
+        }}
+      >
+        <label className="check">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Only install automatic updates inside this window
+        </label>
+        <Field label="Days">
+          <div>
+            {DAY_NAMES.map((name, i) => (
+              <label key={name} className="check" style={{ marginRight: 12 }}>
+                <input type="checkbox" checked={days.includes(i)} onChange={(e) => setDays(e.target.checked ? [...days, i] : days.filter((d) => d !== i))} />{' '}
+                {name.slice(0, 3)}
+              </label>
+            ))}
+          </div>
+        </Field>
+        <Field label="Opens at (24-hour)">
+          <input value={start} onChange={(e) => setStart(e.target.value)} placeholder="04:00" required />
+        </Field>
+        <Field label="Stays open for (minutes)">
+          <input value={duration} onChange={(e) => setDuration(e.target.value)} inputMode="numeric" required />
+        </Field>
+        <Field label="Timezone" hint="A name such as Europe/London or America/New_York. Daylight saving is followed.">
+          <input value={timezone} onChange={(e) => setTimezone(e.target.value)} required />
+        </Field>
+        {saved && <p className="ok">Saved.</p>}
+      </Form>
     </div>
   );
 }

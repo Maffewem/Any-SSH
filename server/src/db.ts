@@ -248,6 +248,26 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX backup_runs_started ON backup_runs(started_at);
   `,
+  `
+  -- Updates requested from the web app. The host's update agent (any-ssh update-poll) picks up a request once
+  -- scheduled_for has passed, which gives connected users time to see the warning first.
+  CREATE TABLE update_requests (
+    id            TEXT PRIMARY KEY,
+    requested_at  INTEGER NOT NULL,
+    requested_by  TEXT NOT NULL,
+    trigger       TEXT NOT NULL CHECK (trigger IN ('manual', 'auto')),
+    scheduled_for INTEGER NOT NULL,
+    status        TEXT NOT NULL CHECK (status IN ('pending', 'started', 'cancelled')),
+    announced     INTEGER NOT NULL DEFAULT 0
+  );
+  -- Single row: when the host agent last polled, and when it last looked for an automatic update.
+  CREATE TABLE update_agent (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    last_seen_at    INTEGER,
+    last_auto_check INTEGER
+  );
+  INSERT INTO update_agent (id) VALUES (1);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

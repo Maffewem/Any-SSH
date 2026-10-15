@@ -5,10 +5,10 @@ import { emailSchema } from './account.js';
 import { badRequest, clientIp, parse, requireAdmin } from '../http.js';
 import { emails } from '../mail.js';
 import { changes } from '../audit.js';
-import { limitSettingsSchema, mailSettingsSchema, securitySettingsSchema, sessionSettingsSchema, type SettingsGroup } from '../settings.js';
+import { limitSettingsSchema, maintenanceSettingsSchema, mailSettingsSchema, securitySettingsSchema, sessionSettingsSchema, type SettingsGroup } from '../settings.js';
 import type { AppContext } from '../types.js';
 
-const groupParam = z.object({ group: z.enum(['mail', 'sessions', 'limits', 'security', 'backup']) });
+const groupParam = z.object({ group: z.enum(['mail', 'sessions', 'limits', 'security', 'backup', 'maintenance']) });
 
 /** Admin-only runtime settings. Every change is audited; secrets are write-only. */
 export function registerSettingsRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -58,6 +58,15 @@ export function registerSettingsRoutes(app: FastifyInstance, ctx: AppContext): v
     const before = settings.security;
     settings.setSecurity(body, user.id);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'security', ip: clientIp(req), details: { changes: changes(before, body) } });
+    return settings.describe();
+  });
+
+  app.put('/api/admin/settings/maintenance', async (req) => {
+    const { user } = requireAdmin(req);
+    const body = parse(maintenanceSettingsSchema, req.body);
+    const before = settings.maintenance;
+    settings.setMaintenance(body, user.id);
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'maintenance', ip: clientIp(req), details: { changes: changes({ ...before, days: before.days.join(',') }, { ...body, days: body.days.join(',') }) } });
     return settings.describe();
   });
 

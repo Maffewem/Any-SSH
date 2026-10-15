@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { errorMessage, formatTime, get, post } from '../api';
+import { del, errorMessage, formatTime, get, post } from '../api';
 import { useAsync } from '../ui';
 
 interface Published {
@@ -16,6 +16,10 @@ interface VersionInfo {
   latest: Published | null;
   updateAvailable: boolean | null;
   error: string | null;
+  maintenance: { enabled: boolean; days: number[]; start: string; durationMinutes: number; timezone: string; open: boolean; nextStart: number | null };
+  agentActive: boolean;
+  pending: { id: string; scheduledFor: number; trigger: 'manual' | 'auto'; requestedBy: string } | null;
+  warningMinutes: number;
 }
 
 interface HistoryEntry {
@@ -39,8 +43,23 @@ export function VersionCard() {
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<VersionInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const v = info ?? data;
   if (!v) return null;
+
+  const run = async (fn: () => Promise<VersionInfo>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setInfo(await fn());
+      setConfirming(false);
+      history.reload();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const check = async () => {
     setBusy(true);
@@ -78,6 +97,45 @@ export function VersionCard() {
           {!v.autoUpdate && <code>sudo any-ssh update</code>} {!v.autoUpdate && 'on the server to install it (it backs up first).'}
         </p>
       )}
+      {v.pending ? (
+        <p className="small" style={{ margin: '0.5rem 0 0' }}>
+          <strong>
+            {v.pending.trigger === 'auto' ? 'An automatic update' : `An update requested by ${v.pending.requestedBy}`} is scheduled for {formatTime(v.pending.scheduledFor)}.
+          </strong>{' '}
+          Connected users have been warned. The server backs up, installs and restarts within a few minutes of that time.{' '}
+          <button className="ghost small" disabled={busy} onClick={() => run(() => del<VersionInfo>('/api/admin/version/update-now'))}>
+            Cancel
+          </button>
+        </p>
+      ) : (
+        <div style={{ margin: '0.5rem 0 0' }}>
+          {!confirming ? (
+            <button disabled={busy || !v.agentActive} onClick={() => setConfirming(true)} title={v.agentActive ? '' : 'Needs the update agent on the server'}>
+              Update now
+            </button>
+          ) : (
+            <p className="small" style={{ margin: 0 }}>
+              Warn everyone connected, then back up and restart in about {v.warningMinutes} minutes? Open terminals disconnect and reconnect on their own.{' '}
+              <button className="primary" disabled={busy} onClick={() => run(() => post<VersionInfo>('/api/admin/version/update-now'))}>
+                {busy ? 'Scheduling…' : 'Yes, update'}
+              </button>{' '}
+              <button className="ghost" disabled={busy} onClick={() => setConfirming(false)}>
+                Never mind
+              </button>
+            </p>
+          )}
+          {!v.agentActive && (
+            <p className="muted small" style={{ margin: '0.25rem 0 0' }}>
+              To enable this, run <code>sudo any-ssh web-update on</code> on the server once (it starts the update agent; the app never gets Docker access).
+            </p>
+          )}
+        </div>
+      )}
+      <p className="muted small" style={{ margin: '0.5rem 0 0' }}>
+        {v.maintenance.enabled
+          ? `Maintenance window: ${v.maintenance.start} for ${v.maintenance.durationMinutes} min (${v.maintenance.timezone}); ${v.maintenance.open ? 'open now' : v.maintenance.nextStart ? `next opens ${formatTime(v.maintenance.nextStart)}` : 'closed'}. Automatic updates only install inside it.`
+          : 'No maintenance window set: automatic updates may install at any time (once a day).'}
+      </p>
       <p className="muted small" style={{ margin: '0.5rem 0 0' }}>
         {v.checkEnabled
           ? `Checks ${v.image} every few hours${v.checkedAt ? `; last checked ${formatTime(v.checkedAt)}` : ''}. Set ANYSSH_UPDATE_CHECK=false to turn this off.`

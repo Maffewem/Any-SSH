@@ -194,6 +194,10 @@ class LiveSession implements LiveTerminal {
     this.detachTimer.unref();
   }
 
+  notify(message: string): void {
+    this.send({ type: 'status', message });
+  }
+
   setLocked(value: boolean): void {
     if (value === this.locked || this.closed) return;
     this.locked = value;

@@ -49,7 +49,8 @@ The installer adds an `any-ssh` command:
 | --- | --- |
 | `sudo any-ssh update` | Backs up, downloads the latest version and restarts. Open terminals drop and users reconnect, so pick a quiet time. |
 | `any-ssh update-log` | Shows the update history: every manual or automatic update, with result (updated, failed, rolled back), versions and who started it. Also kept in the app (Settings → Update history, and the audit log) and in `/opt/any-ssh/update.log`. |
-| `sudo any-ssh auto-update on` | Installs updates by itself: a systemd timer checks daily around 04:00 and updates only if a newer image was published. `off` / `status` also work. Off by default. |
+| `sudo any-ssh auto-update on` | Installs updates by itself, inside the maintenance window set in Settings (once a day at any time if none is set), only if a newer image was published. Users are warned first. `off` / `status` also work. Off by default. Re-run it once after upgrading from an older version so the new update agent timer replaces the old daily one. |
+| `sudo any-ssh web-update on` | Lets admins press **Update now** in Settings. Starts the update agent (see below). `off` / `status` also work. Off by default. |
 | `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). Encrypted once a recovery key is set (see Backups). `--push` also stores one at the off-server destination. |
 | `any-ssh backup-key` | Makes a recovery key pair for backup encryption. |
 | `any-ssh verify-backup <file> <secret-key-file>` | Decrypts a backup and checks it is complete and matches this server's master key. Changes nothing. |
@@ -248,8 +249,22 @@ Redis for tickets, rate limits and revocation. Then a second instance behind the
   every few hours (anonymous, read-only; nothing about your server is sent). Set `ANYSSH_UPDATE_CHECK=false` in `.env`
   to stop this entirely.
 - Applying an update always happens on the host, never from the web app, so the app has no Docker access.
-  `sudo any-ssh update` (manual) and `any-ssh auto-update on` (opt-in, daily) both take a database backup first, and if
-  the new version does not become healthy the previous image is put back automatically.
+  `sudo any-ssh update` (manual), **Update now** in the app and `any-ssh auto-update on` (opt-in) all take a database
+  backup first, and if the new version does not become healthy the previous image is put back automatically. Every
+  update, whoever started it, is listed under Settings → Update history.
+- **Update now and the update agent.** `sudo any-ssh web-update on` (or `auto-update on`) installs a systemd timer that
+  runs `any-ssh update-poll` every 5 minutes. The app only records an admin's request in its database; the agent reads
+  it with `docker compose exec` and runs the normal update. The Update now button stays disabled, with a hint, until the
+  agent has checked in. Admins can cancel a scheduled update from the same place.
+- **Warning before the restart.** A request is not run at once: it is scheduled 2 minutes ahead. At that moment everyone
+  signed in sees a banner and open terminals print a notice. The update then runs at the agent's next check (up to 5
+  minutes later) and takes a minute or two. A restart ends the in-memory SSH sessions, so terminals reconnect to a new
+  one; the browser keeps retrying for about ten minutes, well beyond a normal restart.
+- **Maintenance window.** Settings → Maintenance window sets the days, start time, length and timezone (daylight saving
+  is followed) in which *automatic* updates may be installed. Outside it, a new version is only flagged as available.
+  The agent looks once per window, and an automatic update is not started if the window would close before the warning
+  period ends. With no window set, automatic updates may run at any time, checked once a day. **Update now** is an
+  explicit admin action and is not limited by the window.
 - A rollback restores the old program, not the database. If the new version already changed the database schema, the
   old one may refuse to start; the pre-update backup is in `/opt/any-ssh/backups`.
 - To pin a release instead of following `latest`, set `ANYSSH_VERSION=1.2` in `.env` (tags come from `v*` git tags).

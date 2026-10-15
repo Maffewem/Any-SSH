@@ -17,7 +17,10 @@ Usage: any-ssh <command>
   update        Back up, then download the latest version and restart (open terminals reconnect).
                 If the new version doesn't start, the previous one is put back
   update-log    Show the history of updates (also on the Settings page in the app)
-  auto-update   on | off | status: install updates by itself, daily. Off unless you turn it on
+  auto-update   on | off | status: install updates by itself, inside the maintenance window set in Settings
+                (once a day, any time, if none is set). Off unless you turn it on
+  web-update    on | off | status: let admins press "Update now" in the app. Starts the update agent
+                (a timer that looks for requests every 5 minutes; the app itself never gets Docker access)
   backup        Save a copy of the database to $DIR/backups (keeps the newest $KEEP_BACKUPS). Encrypted once
                 a recovery key is set in Settings. With --push, also store one at the destination set there
   backup-key    Make a new backup recovery key pair (keep the secret half offline, paste the public half in Settings)
@@ -222,6 +225,7 @@ app_image() { dc config --images 2>/dev/null | grep -m1 'any-ssh:' || true; }
 update_app() {
   local mode="$1" old_id new_id image tmp trigger=manual from to
   [ "$mode" = update-if-newer ] && trigger=auto
+  trigger="${ANYSSH_TRIGGER:-$trigger}"
   tmp="$(mktemp -d)"
   # Expand now: the EXIT trap runs after this function returns, when the local $tmp is gone (set -u).
   # shellcheck disable=SC2064
@@ -265,59 +269,113 @@ update_app() {
   # Replaced last: install writes a new file, so this running copy is unaffected.
   install -m 755 "$tmp/any-ssh" /usr/local/bin/any-ssh
   docker image prune -f >/dev/null || true
-  record_update success "$trigger" "$from" "$to"
+  record_update success "$trigger" "$from" "$to" "${ANYSSH_UPDATE_NOTE:-}"
   say "Updated and running"
 }
 
-# Opt-in unattended updates through a systemd timer on the host. The web app never gets Docker access.
-auto_update() {
+# Update agent: a systemd timer that runs `any-ssh update-poll` every 5 minutes. It carries out "Update now" requests
+# from the web app and, when automatic updates are on, applies updates inside the maintenance window. The web app
+# never gets Docker access; it only records requests in its database, which this reads through `docker compose exec`.
+env_flag() { sed -n "s/^$1=//p" "$DIR/.env" | tr -d "'\"" | tail -n 1; }
+set_env_flag() { sed -i "/^$1=/d" "$DIR/.env"; [ -z "$2" ] || echo "$1=$2" >>"$DIR/.env"; }
+
+agent_install() {
   local unit=/etc/systemd/system/any-ssh-update
-  case "$1" in
-    on)
-      command -v systemctl >/dev/null || die "Automatic updates need systemd. With cron instead: 0 4 * * * /usr/local/bin/any-ssh update-if-newer"
-      cat >"$unit.service" <<EOF
+  command -v systemctl >/dev/null || die "This needs systemd. With cron instead, run every 5 minutes: /usr/local/bin/any-ssh update-poll"
+  cat >"$unit.service" <<UNIT
 [Unit]
-Description=Update Any-SSH if a newer version is published
+Description=Carry out Any-SSH update requests and scheduled updates
 After=docker.service network-online.target
 [Service]
 Type=oneshot
 Environment=ANYSSH_DIR=$DIR
-ExecStart=/usr/local/bin/any-ssh update-if-newer
-EOF
-      cat >"$unit.timer" <<EOF
+ExecStart=/usr/local/bin/any-ssh update-poll
+UNIT
+  cat >"$unit.timer" <<UNIT
 [Unit]
-Description=Daily Any-SSH update check
+Description=Any-SSH update agent
 [Timer]
-OnCalendar=*-*-* 04:00
-RandomizedDelaySec=1h
-Persistent=true
+OnBootSec=2min
+OnUnitActiveSec=5min
 [Install]
 WantedBy=timers.target
-EOF
-      systemctl daemon-reload
-      systemctl enable --now any-ssh-update.timer >/dev/null
-      sed -i '/^ANYSSH_AUTO_UPDATE=/d' "$DIR/.env"
-      echo "ANYSSH_AUTO_UPDATE=true" >>"$DIR/.env"
+UNIT
+  systemctl daemon-reload
+  systemctl enable --now any-ssh-update.timer >/dev/null
+}
+
+agent_remove() {
+  if command -v systemctl >/dev/null; then
+    systemctl disable --now any-ssh-update.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/any-ssh-update.service /etc/systemd/system/any-ssh-update.timer
+    systemctl daemon-reload
+  fi
+}
+
+# One agent run. Asks the app what to do (it holds the requests and the maintenance window), then does it.
+update_poll() {
+  running || return 0
+  local out action="" trigger="" by=""
+  out="$(dc exec -T app node dist/cli/update-poll.js 2>/dev/null)" || return 0
+  read -r action trigger by <<<"$out"
+  case "$action" in
+    run)
+      by="${by//_/ }"
+      if [ "$trigger" = auto ]; then
+        ANYSSH_TRIGGER=auto ANYSSH_UPDATE_NOTE="inside the maintenance window" update_app update-if-newer
+      else
+        ANYSSH_TRIGGER=manual ANYSSH_UPDATE_NOTE="requested in the app by $by" update_app update
+      fi
+      ;;
+    check-auto)
+      local old_id new_id
+      old_id="$(image_id)"
+      dc pull --quiet app 2>/dev/null || return 0
+      new_id="$(docker image inspect -f '{{.Id}}' "$(app_image)" 2>/dev/null || true)"
+      if [ -n "$old_id" ] && [ "$old_id" != "$new_id" ]; then
+        say "A newer version is available; warning users, then updating"
+        dc exec -T app node dist/cli/update-poll.js schedule-auto >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+}
+
+auto_update() {
+  case "$1" in
+    on)
+      agent_install
+      set_env_flag ANYSSH_AUTO_UPDATE true
       dc up -d
-      say "Automatic updates are on: a daily check around 04:00, with a backup first and a rollback if the new version doesn't start"
+      say "Automatic updates are on. They run inside the maintenance window set in Settings (once a day if none is set), with a backup first, a warning to connected users and a rollback if the new version doesn't start"
       ;;
     off)
-      if command -v systemctl >/dev/null; then
-        systemctl disable --now any-ssh-update.timer >/dev/null 2>&1 || true
-        rm -f "$unit.service" "$unit.timer"
-        systemctl daemon-reload
-      fi
-      sed -i '/^ANYSSH_AUTO_UPDATE=/d' "$DIR/.env"
+      [ "$(env_flag ANYSSH_WEB_UPDATE)" = true ] || agent_remove
+      set_env_flag ANYSSH_AUTO_UPDATE ""
       dc up -d
       say "Automatic updates are off"
       ;;
     status)
-      if systemctl is-enabled any-ssh-update.timer >/dev/null 2>&1; then
-        say "Automatic updates are on"
-        systemctl list-timers any-ssh-update.timer --no-pager 2>/dev/null | sed -n 1,2p
-      else
-        say "Automatic updates are off (turn on with: sudo any-ssh auto-update on)"
-      fi
+      if [ "$(env_flag ANYSSH_AUTO_UPDATE)" = true ]; then say "Automatic updates are on"; else say "Automatic updates are off (turn on with: sudo any-ssh auto-update on)"; fi
+      systemctl list-timers any-ssh-update.timer --no-pager 2>/dev/null | sed -n 1,2p || true
+      ;;
+    *) usage >&2; exit 1 ;;
+  esac
+}
+
+web_update() {
+  case "$1" in
+    on)
+      agent_install
+      set_env_flag ANYSSH_WEB_UPDATE true
+      say "Admins can now press \"Update now\" in Settings. The update agent looks for requests every 5 minutes"
+      ;;
+    off)
+      [ "$(env_flag ANYSSH_AUTO_UPDATE)" = true ] || agent_remove
+      set_env_flag ANYSSH_WEB_UPDATE ""
+      say "\"Update now\" is off"
+      ;;
+    status)
+      if [ "$(env_flag ANYSSH_WEB_UPDATE)" = true ]; then say "\"Update now\" is on"; else say "\"Update now\" is off (turn on with: sudo any-ssh web-update on)"; fi
       ;;
     *) usage >&2; exit 1 ;;
   esac
@@ -353,6 +411,8 @@ case "${1:-help}" in
     update_app "$1"
     ;;
   auto-update) need_root auto-update; auto_update "${2:-status}" ;;
+  web-update) need_root web-update; web_update "${2:-status}" ;;
+  update-poll) need_root update-poll; update_poll ;;
   update-log) [ -r "$DIR/update.log" ] && tail -n 50 "$DIR/update.log" || echo "No updates recorded yet." ;;
   backup) need_root backup; backup "${2:-}" ;;
   backup-key) dc run --rm --no-deps -T app node dist/cli/backup.js keygen ;;
