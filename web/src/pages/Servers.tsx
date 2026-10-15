@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { del, get, patch, post, put, type AuthMethod, type ConnectChoice, type ConnectCredential, type JumpHost, type JumpMode, type Server, type Share, type ShareCredentials, type SshKey } from '../api';
+import { del, formatTime, get, patch, post, put, type AuthMethod, type ConnectChoice, type ConnectCredential, type JumpHost, type JumpMode, type Server, type Share, type ShareCredentials, type SshKey } from '../api';
 import { Field, Form, Modal, useAsync } from '../ui';
 
 export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, choice?: ConnectChoice) => void; isAdmin: boolean }) {
@@ -48,7 +48,11 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
                   </span>
                 )}
                 <span className="badge">{s.credentials === 'own' ? 'Your own credentials' : authLabel(s.authMethod)}</span>
-                {!s.hostKeyFingerprint && <span className="badge warn">Host key not verified</span>}
+                {s.hostKeyChange ? (
+                  <span className="badge warn">Host key CHANGED</span>
+                ) : (
+                  !s.hostKeyFingerprint && <span className="badge warn">Host key not verified</span>
+                )}
                 {s.jump.mode !== 'none' && (
                   <span className="badge">{s.jump.mode === 'auto' ? 'Via closest jump host' : `Via ${s.jump.host?.name ?? 'missing jump host'}`}</span>
                 )}
@@ -203,22 +207,7 @@ function ServerForm({ server, isAdmin, onClose, onSaved }: { server: Server | nu
       </Form>
       {server && (
         <div className="subsection">
-          {server.hostKeyFingerprint && (
-            <p className="muted small">
-              Host key: <code>{server.hostKeyFingerprint}</code>{' '}
-              <button
-                className="link"
-                onClick={async () => {
-                  if (confirm('Forget the pinned host key? You will be asked to verify it again on the next connection.')) {
-                    await post(`/api/servers/${server.id}/forget-host-key`);
-                    onSaved();
-                  }
-                }}
-              >
-                Forget
-              </button>
-            </p>
-          )}
+          <HostKeyPanel server={server} isOwner={isOwner} onChanged={onSaved} />
           {isOwner &&
             (confirmDelete ? (
               <button className="danger" onClick={async () => (await del(`/api/servers/${server.id}`), onSaved())}>
@@ -411,5 +400,94 @@ function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose
         )}
       </Form>
     </Modal>
+  );
+}
+
+function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner: boolean; onChanged: () => void }) {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const pin = server.hostKey;
+  const change = server.hostKeyChange;
+  const run = async (fn: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await fn();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  if (!pin && !change) return <p className="muted small">Host key: not verified yet. You will be shown its fingerprint on the first connection.</p>;
+  return (
+    <div className="hostkey-panel">
+      {change && (
+        <div className="card warn-card">
+          <p className="error">
+            <strong>This server presented a different host key and was refused.</strong> Seen {formatTime(change.seenAt)}.
+          </p>
+          <p className="muted small">Pinned</p>
+          <p className="fingerprint mono">{pin?.fingerprint}</p>
+          <p className="muted small">Presented</p>
+          <p className="fingerprint mono">
+            {change.type ?? ''}
+            <br />
+            {change.fingerprint}
+          </p>
+          {isOwner ? (
+            reviewing ? (
+              <>
+                <p className="muted small">
+                  Only accept if you re-keyed or reinstalled this server and checked this fingerprint on the server itself
+                  (<code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code>).
+                </p>
+                <Field label="Your password">
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+                </Field>
+                <div className="row">
+                  <button
+                    className="danger"
+                    disabled={!password}
+                    onClick={() => run(() => post(`/api/servers/${server.id}/host-key/accept`, { fingerprint: change.fingerprint, password }))}
+                  >
+                    Accept the new key
+                  </button>
+                  <button onClick={() => setReviewing(false)}>Back</button>
+                </div>
+              </>
+            ) : (
+              <div className="row">
+                <button className="danger-outline" onClick={() => setReviewing(true)}>
+                  Review and accept…
+                </button>
+                <button onClick={() => run(() => post(`/api/servers/${server.id}/host-key/dismiss`))}>Dismiss (keep the pinned key)</button>
+              </div>
+            )
+          ) : (
+            <p className="muted small">Only the owner can accept a new key.</p>
+          )}
+        </div>
+      )}
+      {pin && (
+        <p className="muted small">
+          Host key: <code>{pin.fingerprint}</code>
+          {pin.type ? ` (${pin.type})` : ''}
+          {pin.pinnedAt ? ` · trusted ${formatTime(pin.pinnedAt)}${pin.pinnedBy ? ` by ${pin.pinnedBy}` : ''}` : ''}{' '}
+          {isOwner && (
+            <button
+              className="link"
+              onClick={async () => {
+                if (confirm('Forget the pinned host key? You will be asked to verify it again on the next connection.')) {
+                  await run(() => post(`/api/servers/${server.id}/forget-host-key`));
+                }
+              }}
+            >
+              Forget
+            </button>
+          )}
+        </p>
+      )}
+      {error && <p className="error">{error}</p>}
+    </div>
   );
 }

@@ -4,10 +4,11 @@ import { notify } from '../accountTokens.js';
 import { emailSchema } from './account.js';
 import { badRequest, clientIp, parse, requireAdmin } from '../http.js';
 import { emails } from '../mail.js';
-import { limitSettingsSchema, mailSettingsSchema, sessionSettingsSchema, type SettingsGroup } from '../settings.js';
+import { changes } from '../audit.js';
+import { limitSettingsSchema, mailSettingsSchema, securitySettingsSchema, sessionSettingsSchema, type SettingsGroup } from '../settings.js';
 import type { AppContext } from '../types.js';
 
-const groupParam = z.object({ group: z.enum(['mail', 'sessions', 'limits']) });
+const groupParam = z.object({ group: z.enum(['mail', 'sessions', 'limits', 'security']) });
 
 /** Admin-only runtime settings. Every change is audited; secrets are write-only. */
 export function registerSettingsRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -22,12 +23,13 @@ export function registerSettingsRoutes(app: FastifyInstance, ctx: AppContext): v
     const { user } = requireAdmin(req);
     const body = parse(mailSettingsSchema, req.body);
     let changed: string[];
+    let diff: Record<string, { from: unknown; to: unknown }>;
     try {
-      changed = settings.setMail(body, user.id);
+      ({ changed, changes: diff } = settings.setMail(body, user.id));
     } catch (err) {
       throw badRequest(err instanceof Error ? err.message : String(err));
     }
-    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'mail', ip: clientIp(req), details: { changed } });
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'mail', ip: clientIp(req), details: { changed, changes: diff } });
     if (changed.length) notify(ctx, req.log, user, `email settings were changed (${changed.join(', ')})`);
     return settings.describe();
   });
@@ -35,24 +37,41 @@ export function registerSettingsRoutes(app: FastifyInstance, ctx: AppContext): v
   app.put('/api/admin/settings/sessions', async (req) => {
     const { user } = requireAdmin(req);
     const body = parse(sessionSettingsSchema, req.body);
+    const before = settings.sessions;
     settings.setSessions(body, user.id);
-    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'sessions', ip: clientIp(req), details: body });
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'sessions', ip: clientIp(req), details: { changes: changes(before, body) } });
     return settings.describe();
   });
 
   app.put('/api/admin/settings/limits', async (req) => {
     const { user } = requireAdmin(req);
     const body = parse(limitSettingsSchema, req.body);
+    const before = settings.limits;
     settings.setLimits(body, user.id);
-    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'limits', ip: clientIp(req), details: body });
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'limits', ip: clientIp(req), details: { changes: changes(before, body) } });
+    return settings.describe();
+  });
+
+  app.put('/api/admin/settings/security', async (req) => {
+    const { user } = requireAdmin(req);
+    const body = parse(securitySettingsSchema, req.body);
+    const before = settings.security;
+    settings.setSecurity(body, user.id);
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'security', ip: clientIp(req), details: { changes: changes(before, body) } });
     return settings.describe();
   });
 
   app.delete('/api/admin/settings/:group', async (req) => {
     const { user } = requireAdmin(req);
     const { group } = parse(groupParam, req.params);
-    settings.reset(group as SettingsGroup);
-    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_reset', targetType: 'settings', targetId: group, ip: clientIp(req) });
+    const g = group as SettingsGroup;
+    const snapshot = (): Record<string, unknown> => {
+      if (g === 'mail') { const m = settings.describe().mail; return { enabled: m.enabled, host: m.host, port: m.port, security: m.security, username: m.username, from: m.from }; }
+      return { ...settings[g] };
+    };
+    const before = snapshot();
+    settings.reset(g);
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_reset', targetType: 'settings', targetId: group, ip: clientIp(req), details: { changes: changes(before, snapshot()) } });
     if (group === 'mail') notify(ctx, req.log, user, 'email settings were reset to the server defaults');
     return settings.describe();
   });

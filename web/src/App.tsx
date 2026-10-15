@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { get, post, setIpChallengeHandler, setLockedHandler, setUnauthenticatedHandler, type ConnectChoice, type Server, type User } from './api';
 import { LockScreen, useIdleLock } from './lock';
 import { AccountPage } from './pages/Account';
-import { AdminUsersPage, AuditPage } from './pages/Admin';
+import { AdminUsersPage, AuditPage, HostKeysPage } from './pages/Admin';
 import { SettingsPage } from './pages/Settings';
 import { ForcePasswordChangePage, IpChallengePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
 import { KeysPage } from './pages/Keys';
@@ -11,7 +11,7 @@ import { remove, split, leaves, type Layout } from './terminal/layout';
 import type { TerminalState } from './terminal/TerminalSession';
 import { TerminalTab, tabState, type TabModel } from './terminal/TerminalTab';
 
-type Page = 'servers' | 'keys' | 'account' | 'users' | 'audit' | 'settings';
+type Page = 'servers' | 'keys' | 'account' | 'users' | 'audit' | 'hostkeys' | 'settings';
 type Boot =
   | { kind: 'loading' }
   | { kind: 'setup' }
@@ -31,7 +31,7 @@ function linkTokenFromHash(): string | null {
 
 function pageFromHash(): Page {
   const h = location.hash.replace(/^#\/?/, '');
-  return (['servers', 'keys', 'account', 'users', 'audit', 'settings'] as const).find((p) => p === h) ?? 'servers';
+  return (['servers', 'keys', 'account', 'users', 'audit', 'hostkeys', 'settings'] as const).find((p) => p === h) ?? 'servers';
 }
 
 export function App() {
@@ -172,6 +172,7 @@ export function App() {
     { id: 'keys', label: 'Keys' },
     { id: 'users', label: 'Users', admin: true },
     { id: 'audit', label: 'Audit', admin: true },
+    { id: 'hostkeys', label: 'Host keys', admin: true },
     { id: 'settings', label: 'Settings', admin: true },
     { id: 'account', label: 'Account' },
   ];
@@ -247,6 +248,7 @@ export function App() {
             {page === 'account' && <AccountPage user={user} onUserChange={(u) => setBoot({ kind: 'app', user: u })} />}
             {page === 'users' && user.role === 'admin' && <AdminUsersPage me={user} />}
             {page === 'audit' && user.role === 'admin' && <AuditPage />}
+            {page === 'hostkeys' && user.role === 'admin' && <HostKeysPage />}
             {page === 'settings' && user.role === 'admin' && <SettingsPage />}
           </>
         )}

@@ -8,6 +8,7 @@ import { Field, Form, Modal } from '../ui';
 
 type Prompt =
   | { kind: 'hostkey'; fingerprint: string; keyType: string; host: string; port: number }
+  | { kind: 'hostkey_changed'; host: string; port: number; expected: string; expectedType: string | null; presented: string; presentedType: string; isOwner: boolean }
   | { kind: 'password'; username: string; host: string };
 
 export type TerminalState = 'connecting' | 'connected' | 'reconnecting' | 'closed';
@@ -186,6 +187,12 @@ export function TerminalSession(props: {
           case 'hostkey':
             setPrompt({ kind: 'hostkey', fingerprint: m.fingerprint, keyType: m.keyType, host: m.host, port: m.port });
             break;
+          case 'hostkey_changed':
+            setPrompt({
+              kind: 'hostkey_changed', host: m.host, port: m.port, expected: m.expected, expectedType: m.expectedType,
+              presented: m.presented, presentedType: m.presentedType, isOwner: m.isOwner,
+            });
+            break;
           case 'password':
             setPrompt({ kind: 'password', username: m.username, host: m.host });
             break;
@@ -280,8 +287,8 @@ export function TerminalSession(props: {
         <Modal title="Verify host key" onClose={() => (send({ type: 'hostkey', accept: false }), setPrompt(null))}>
           <p>
             This is the first connection to <strong>{prompt.host}</strong>
-            {prompt.port !== 22 ? `:${prompt.port}` : ''}. Check that the fingerprint below matches the server before trusting it
-            (on the server: <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code>).
+            {prompt.port !== 22 ? `:${prompt.port}` : ''}. Compare the fingerprint below with the one on the server itself
+            (run <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> there) before trusting it. Don’t trust it if you can’t check.
           </p>
           <p className="fingerprint mono">
             {prompt.keyType}
@@ -294,6 +301,37 @@ export function TerminalSession(props: {
               Trust and connect
             </button>
             <button onClick={() => (send({ type: 'hostkey', accept: false }), setPrompt(null))}>Cancel</button>
+          </div>
+        </Modal>
+      )}
+      {prompt?.kind === 'hostkey_changed' && (
+        <Modal title="Host key changed: connection blocked" onClose={() => setPrompt(null)}>
+          <p className="error">
+            <strong>{prompt.host}</strong>
+            {prompt.port !== 22 ? `:${prompt.port}` : ''} is presenting a different host key from the one Any-SSH pinned. This can mean the
+            server was reinstalled, or that someone is intercepting the connection. Nothing was sent to it.
+          </p>
+          <p className="muted small">Pinned (trusted)</p>
+          <p className="fingerprint mono">
+            {prompt.expectedType ?? ''}
+            <br />
+            {prompt.expected}
+          </p>
+          <p className="muted small">Presented now</p>
+          <p className="fingerprint mono">
+            {prompt.presentedType}
+            <br />
+            {prompt.presented}
+          </p>
+          <p className="muted small">
+            {prompt.isOwner
+              ? 'If you did not re-key this server, do not accept it. To accept the new key, open Servers, choose Edit on this server and review the change (your password is required). The owner has been emailed.'
+              : 'Only the server’s owner can accept a new key. They have been emailed; tell them, and do not try to connect another way.'}
+          </p>
+          <div className="row">
+            <button className="primary" onClick={() => setPrompt(null)}>
+              Close
+            </button>
           </div>
         </Modal>
       )}

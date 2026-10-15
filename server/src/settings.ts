@@ -31,7 +31,34 @@ export interface LimitSettings {
   detachMinutes: number;
 }
 
-export type SettingsGroup = 'mail' | 'sessions' | 'limits';
+export interface SecuritySettings {
+  /** Failed attempts on one account inside the window that lock it. */
+  accountThreshold: number;
+  /** Failed attempts from one address inside the window that block it. */
+  ipThreshold: number;
+  windowMinutes: number;
+  lockoutMinutes: number;
+  /** Email the account owner when their account is locked. */
+  notifyOwner: boolean;
+}
+
+export const DEFAULT_SECURITY: SecuritySettings = {
+  accountThreshold: 5,
+  ipThreshold: 30,
+  windowMinutes: 15,
+  lockoutMinutes: 15,
+  notifyOwner: true,
+};
+
+export const securitySettingsSchema = z.object({
+  accountThreshold: z.number().int().min(3).max(100),
+  ipThreshold: z.number().int().min(3).max(1000),
+  windowMinutes: z.number().int().min(1).max(24 * 60),
+  lockoutMinutes: z.number().int().min(1).max(7 * 24 * 60),
+  notifyOwner: z.boolean(),
+});
+
+export type SettingsGroup = 'mail' | 'sessions' | 'limits' | 'security';
 export type SettingsSource = 'environment' | 'web';
 
 export const settingContext = (id: string) => `setting:${id}`;
@@ -155,6 +182,11 @@ export class Settings {
     return { maxTerminalsPerUser: this.env.maxTerminalsPerUser, detachMinutes: this.env.detachMinutes };
   }
 
+  get security(): SecuritySettings {
+    const row = this.row('security');
+    return row ? { ...DEFAULT_SECURITY, ...(JSON.parse(row.value) as Partial<SecuritySettings>) } : DEFAULT_SECURITY;
+  }
+
   // Getters in the shape SessionStore reads, so changes apply without a restart.
   get sessionLockMinutes(): number {
     return this.sessions.lockMinutes;
@@ -182,6 +214,7 @@ export class Settings {
       },
       sessions: { source: this.source('sessions'), ...this.sessions },
       limits: { source: this.source('limits'), ...this.limits },
+      security: { source: this.source('security'), ...this.security },
     };
   }
 
@@ -190,7 +223,7 @@ export class Settings {
    * Changing the server or username drops a stored password unless a new one is given, so a
    * hijacked admin session cannot point SMTP at its own server and collect the old password.
    */
-  setMail(input: MailSettingsInput, actorId: string): string[] {
+  setMail(input: MailSettingsInput, actorId: string): { changed: string[]; changes: Record<string, { from: unknown; to: unknown }> } {
     if (input.enabled && !input.host) throw new Error('Enter the SMTP server.');
     const before = this.describe().mail;
     const row = this.row('mail');
@@ -221,7 +254,10 @@ export class Settings {
     const changed: string[] = (['enabled', 'host', 'port', 'security', 'username', 'from'] as const).filter((k) => before[k] !== after[k]);
     if (input.password !== undefined) changed.push('password');
     else if (before.hasPassword && !after.hasPassword) changed.push('password_cleared');
-    return changed;
+    // Old → new for the audit log. The password is never included, only whether it changed.
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    for (const k of changed) if (k in before) changes[k] = { from: before[k as keyof typeof before], to: after[k as keyof typeof after] };
+    return { changed, changes };
   }
 
   setSessions(input: SessionSettings, actorId: string): void {
@@ -232,7 +268,11 @@ export class Settings {
     this.write('limits', JSON.stringify(limitSettingsSchema.parse(input)), null, actorId);
   }
 
-  /** Back to the environment's values. */
+  setSecurity(input: SecuritySettings, actorId: string): void {
+    this.write('security', JSON.stringify(securitySettingsSchema.parse(input)), null, actorId);
+  }
+
+  /** Back to the environment's values (the built-in defaults for the security group). */
   reset(group: SettingsGroup): void {
     this.db.prepare('DELETE FROM settings WHERE id = ?').run(group);
     this.changed(group);

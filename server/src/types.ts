@@ -1,4 +1,5 @@
 import type { AuditLog } from './audit.js';
+import type { BruteForce } from './bruteForce.js';
 import type { Config } from './config.js';
 import type { SecretBox } from './crypto.js';
 import type { DB } from './db.js';
@@ -72,6 +73,14 @@ export interface ServerRow {
   host_key_fingerprint: string | null;
   jump_mode: 'none' | 'auto' | 'fixed';
   jump_host_id: string | null;
+  host_key_type: string | null;
+  host_key_pinned_at: number | null;
+  /** Username of whoever trusted the pinned key. */
+  host_key_pinned_by: string | null;
+  /** A different key the server presented; refused until the owner accepts or dismisses it. */
+  host_key_pending: string | null;
+  host_key_pending_type: string | null;
+  host_key_pending_at: number | null;
   notes: string;
   created_at: number;
   updated_at: number;
@@ -114,6 +123,7 @@ export interface AppContext {
   db: DB;
   box: SecretBox;
   audit: AuditLog;
+  bruteForce: BruteForce;
   sessions: SessionStore;
   terminals: TerminalRegistry;
   mailer: Mailer;

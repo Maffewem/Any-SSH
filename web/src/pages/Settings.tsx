@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { del, errorMessage, get, post, put, type SettingsView } from '../api';
+import { del, errorMessage, formatTime, get, post, put, type SettingsView } from '../api';
 import { Field, Form, useAsync } from '../ui';
 import { JumpHostsSection } from './JumpHosts';
 import { VersionCard } from './Version';
@@ -44,6 +44,7 @@ export function SettingsPage() {
           <SessionSection key={`sessions-${resets}`} view={current} onSaved={onSaved} />
           <LimitsSection key={`limits-${resets}`} view={current} onSaved={onSaved} />
           <JumpHostsSection />
+          <SecuritySection key={`security-${resets}`} view={current} onSaved={onSaved} />
           <VersionCard />
         </>
       )}
@@ -262,6 +263,90 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
         </Field>
         {saved && <p className="ok">Saved.</p>}
       </Form>
+    </div>
+  );
+}
+
+function SecuritySection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
+  const b = view.security;
+  const [accountThreshold, setAccount] = useState(String(b.accountThreshold));
+  const [ipThreshold, setIp] = useState(String(b.ipThreshold));
+  const [windowMinutes, setWindow] = useState(String(b.windowMinutes));
+  const [lockoutMinutes, setLockout] = useState(String(b.lockoutMinutes));
+  const [notifyOwner, setNotify] = useState(b.notifyOwner);
+  const [saved, setSaved] = useState(false);
+  const lockouts = useAsync(() => get<{ ips: { ip: string; lockedUntil: number; failures: number }[] }>('/api/admin/lockouts'), [view]);
+  const [unlocked, setUnlocked] = useState<string[]>([]);
+  const ips = (lockouts.data?.ips ?? []).filter((l) => !unlocked.includes(l.ip));
+  return (
+    <div className="card settings-section">
+      <div className="page-head">
+        <h2>
+          Brute-force protection <SourceBadge source={b.source} />
+        </h2>
+        <ResetButton group="security" source={b.source} onDone={onSaved} />
+      </div>
+      <p className="muted small">
+        Wrong passwords, 2FA codes, unlock passwords, reset links and re-entered passwords are counted. Too many on one account locks that
+        account; too many from one address blocks that address from signing in. Counters restart after each lockout.
+      </p>
+      <Form
+        submit="Save protection settings"
+        onSubmit={async () => {
+          setSaved(false);
+          onSaved(
+            await put<SettingsView>('/api/admin/settings/security', {
+              accountThreshold: Number(accountThreshold),
+              ipThreshold: Number(ipThreshold),
+              windowMinutes: Number(windowMinutes),
+              lockoutMinutes: Number(lockoutMinutes),
+              notifyOwner,
+            }),
+          );
+          setSaved(true);
+        }}
+      >
+        <Field label="Lock an account after (failed attempts)" hint="Counted within the window below. Minimum 3.">
+          <input value={accountThreshold} onChange={(e) => setAccount(e.target.value)} inputMode="numeric" required />
+        </Field>
+        <Field label="Block an address after (failed attempts)" hint="Across all accounts, so password spraying is caught too. Keep this above the account value.">
+          <input value={ipThreshold} onChange={(e) => setIp(e.target.value)} inputMode="numeric" required />
+        </Field>
+        <Field label="Counting window (minutes)">
+          <input value={windowMinutes} onChange={(e) => setWindow(e.target.value)} inputMode="numeric" required />
+        </Field>
+        <Field label="Lockout length (minutes)" hint="Admins can unlock an account or address sooner.">
+          <input value={lockoutMinutes} onChange={(e) => setLockout(e.target.value)} inputMode="numeric" required />
+        </Field>
+        <label className="check">
+          <input type="checkbox" checked={notifyOwner} onChange={(e) => setNotify(e.target.checked)} /> Email the account owner when their account is locked
+        </label>
+        {saved && <p className="ok">Saved.</p>}
+      </Form>
+      <div className="subsection">
+        <h3>Blocked addresses</h3>
+        {ips.length === 0 ? (
+          <p className="muted small">None right now. Locked accounts are unlocked from the Users page.</p>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0 }}>
+            {ips.map((l) => (
+              <li key={l.ip} className="row wrap">
+                <span className="mono">{l.ip}</span>
+                <span className="muted small">until {formatTime(l.lockedUntil)} after {l.failures} failures</span>
+                <button
+                  className="small"
+                  onClick={async () => {
+                    await del(`/api/admin/lockouts/ip/${encodeURIComponent(l.ip)}`);
+                    setUnlocked((u) => [...u, l.ip]);
+                  }}
+                >
+                  Unblock
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

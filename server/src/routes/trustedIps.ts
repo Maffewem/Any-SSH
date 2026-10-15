@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { notify } from '../accountTokens.js';
+import { recordReauthFailure } from '../bruteForce.js';
 import { HttpError, badRequest, clientIp, idParam, parse, requireUser } from '../http.js';
 import { isTrustedIp, newTrustedId, normaliseIp, parseTrustedEntry, trustedEntries } from '../ipTrust.js';
 import { verifyPassword } from '../passwords.js';
+import { changes } from '../audit.js';
 import type { AppContext, UserRow } from '../types.js';
 
 const MAX_ENTRIES = 50;
@@ -41,6 +43,7 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
 
   async function confirmPassword(req: Parameters<typeof clientIp>[0], user: UserRow, password: string, action: string): Promise<void> {
     if (await verifyPassword(user.password_hash, password)) return;
+    recordReauthFailure(ctx, req.log, clientIp(req), user);
     audit.record({ actorId: user.id, actorUsername: user.username, action, outcome: 'failure', ip: clientIp(req) });
     throw badRequest('Password is incorrect.');
   }
@@ -118,6 +121,7 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
         throw badRequest('Holding sign-ins from new addresses needs a way to verify you. Add an email address or turn on two-factor first.');
       }
     }
+    const before = { enabled: user.trusted_ip_enabled === 1, policy: user.trusted_ip_policy };
     db.prepare('UPDATE users SET trusted_ip_enabled = ?, trusted_ip_policy = ?, updated_at = ? WHERE id = ?').run(
       body.enabled ? 1 : 0, body.policy, Date.now(), user.id,
     );
@@ -125,7 +129,7 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
     if (!body.enabled) db.prepare('UPDATE sessions SET ip_challenge = 0 WHERE user_id = ?').run(user.id);
     audit.record({
       actorId: user.id, actorUsername: user.username, action: 'user.trusted_ip_settings', ip: clientIp(req),
-      details: { enabled: body.enabled, policy: body.policy },
+      details: { enabled: body.enabled, policy: body.policy, changes: changes(before, { enabled: body.enabled, policy: body.policy }) },
     });
     notify(ctx, req.log, user, body.enabled ? `the trusted IP list was turned on (${body.policy === 'challenge' ? 'unlisted addresses are held until verified' : 'unlisted addresses are reported'})` : 'the trusted IP list was turned off');
     return view(user, clientIp(req));

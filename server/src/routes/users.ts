@@ -2,6 +2,8 @@ import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TOKEN_TTL_MS, issueToken, notify, tokenUrl } from '../accountTokens.js';
+import { changes } from '../audit.js';
+import { assertIpAllowed, recordAuthFailure } from '../bruteForce.js';
 import { randomToken, safeEqual } from '../crypto.js';
 import { emails } from '../mail.js';
 import { emailSchema } from './account.js';
@@ -75,8 +77,10 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
 
   app.post('/api/setup', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => {
     const body = parse(setupBody, req.body);
+    assertIpAllowed(ctx, clientIp(req));
     if (userCount() > 0 || !setup.token) throw forbidden('Setup has already been completed.');
     if (!safeEqual(body.setupToken.trim(), setup.token)) {
+      recordAuthFailure(ctx, req.log, clientIp(req), 'setup');
       audit.record({ action: 'setup.create_admin', outcome: 'failure', ip: clientIp(req) });
       throw forbidden('Setup token is incorrect.');
     }
@@ -213,7 +217,14 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     }
     audit.record({
       actorId: admin.id, actorUsername: admin.username, action: 'admin.user_update', targetType: 'user', targetId: id,
-      ip: clientIp(req), details: { username: target.username, ...body },
+      ip: clientIp(req),
+      details: {
+        username: target.username,
+        changes: changes(
+          { displayName: target.display_name, role: target.role, status: target.status, email: target.email },
+          { displayName: body.displayName ?? target.display_name, role: body.role ?? target.role, status: body.status ?? target.status, email: emailChanging ? (body.email ?? null) : target.email },
+        ),
+      },
     });
     return { user: publicUser(findUser(id)!) };
   });
@@ -280,10 +291,24 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     const target = findUser(id);
     if (!target) throw notFound('User not found');
     db.prepare('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?').run(id);
+    ctx.bruteForce.clearUser(id);
     audit.record({
       actorId: admin.id, actorUsername: admin.username, action: 'admin.user_unlock', targetType: 'user', targetId: id,
-      ip: clientIp(req), details: { username: target.username },
+      ip: clientIp(req), details: { username: target.username, wasLocked: target.locked_until !== null && target.locked_until > Date.now() },
     });
+    return { ok: true };
+  });
+
+  app.get('/api/admin/lockouts', async (req) => {
+    requireAdmin(req);
+    return { ips: ctx.bruteForce.listIpLockouts() };
+  });
+
+  app.delete('/api/admin/lockouts/ip/:ip', async (req) => {
+    const admin = requireAdmin(req).user;
+    const { ip } = parse(z.object({ ip: z.string().min(2).max(64) }), req.params);
+    if (!ctx.bruteForce.unlockIp(ip)) throw notFound('That address is not locked out');
+    audit.record({ actorId: admin.id, actorUsername: admin.username, action: 'admin.ip_unlock', targetType: 'ip', targetId: ip, ip: clientIp(req) });
     return { ok: true };
   });
 

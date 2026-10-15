@@ -32,7 +32,7 @@ wrappers can come later.
 | Password hashing | Argon2id, 64 MiB / 3 passes / 4 lanes (OWASP baseline). Hashes are upgraded on login if parameters change. |
 | Password policy | Minimum 12 characters, max 256, not a common password, must not contain the username. |
 | Username enumeration | Unknown usernames still run a full Argon2 verification and return the same error as a wrong password. |
-| Brute force | Per-IP rate limits on login and MFA (10/min) and first-run setup (5/min); account locked 15 min after every 5 consecutive failures (password or MFA). Admins can unlock. |
+| Brute force | Layered. (1) Per-IP request rate limits on login, MFA, unlock (10/min) and reset/setup (5/min). (2) **Per-account lockout**: failed passwords, 2FA/recovery codes, screen-unlock passwords, trusted-IP challenge codes and wrong passwords re-entered for sensitive actions (change password/email, 2FA, key export, trusted IPs) are counted in a sliding window; at the threshold (default 5 in 15 min) the account is locked (default 15 min), the owner is emailed, and for a re-auth lockout every session of the account is ended. (3) **Per-IP lockout**: the same failures, plus unknown usernames, bad reset links and bad setup tokens, are counted per address across all accounts (default 30 in 15 min); a blocked address gets `429 ip_locked` from login, MFA, unlock, challenge, forgot-password, reset links and setup. Unknown-identifier reset requests count against the address only, never an account, so nobody can lock a victim out through password reset. Thresholds, window, lockout length and the owner email are admin-configurable on Settings → Brute-force protection (minimum threshold 3). Counters restart after each lockout. Admins unlock accounts (Users) and addresses (Settings). Each lockout is one `auth.lockout` audit entry (scope, count, kind, expiry); blocked requests are not logged individually, so an attack cannot flood the log. Trade-off: a determined attacker who knows a username can keep that account locked (a denial of service); the owner is told by email, and admins can unlock. Behind a proxy the address is the one set by `ANYSSH_TRUST_PROXY`, so that setting must be right or all users share one address. |
 | MFA | TOTP (RFC 6238, works with any authenticator app). ±30 s drift, replay of a used code is rejected. Ten single-use recovery codes, stored as SHA-256 hashes. TOTP seed is encrypted at rest. |
 | Sessions | 256-bit random token in an `HttpOnly`, `SameSite=Strict` cookie (`__Host-` prefixed and `Secure` in production). Only the token's SHA-256 is stored, so a database leak cannot be replayed as cookies. Locks after 15 min idle, signs out after 120 min idle, 12 h absolute expiry (all configurable). |
 | Idle lock | Decided server-side from the last real activity (API calls, terminal keystrokes, and a throttled heartbeat when the browser sees keyboard or pointer use; the lock screen's own state check does not count). A locked session gets `401 session_locked` from every API call except `me`, `state`, `unlock` and `logout`, cannot get terminal tickets, and its open terminals are paused: keystrokes are dropped and the SSH channel stops reading, so output waits on the remote side instead of reaching an unattended screen. Unlocking needs the account password only (the session already passed 2FA); 5 wrong passwords end the session, a locked-out account cannot unlock, and the idle sign-out and absolute lifetime still apply while locked. Users can also lock on demand. |
@@ -54,7 +54,7 @@ wrappers can come later.
   so a compromised admin session cannot silently open a shell on every server.
 - **Servers** belong to an owner. The owner can share a server with any number of users:
   - `use`: can connect. Cannot see or change host, username or credentials.
-  - `manage`: can also rename it, edit notes and forget the pinned host key.
+  - `manage`: can also rename it, edit notes and trust a server's host key on first use (but not replace a pinned one).
   - Only the owner can change connection details or credentials, grant `manage`, or delete. This stops a manager from
     re-pointing a server that stores a password at a machine they control and harvesting it.
 - **Re-sharing is off by default.** A `manage` grant carries a separate "can re-share" flag that only the owner can set.
@@ -125,10 +125,22 @@ and reset links directly so they can pass them on.
    `Origin` header is an allowed origin and that the session cookie is the one the ticket was issued to. This blocks
    cross-site WebSocket hijacking.
 3. **Host key verification (no blind trust).** The SHA-256 fingerprint of the server's host key is pinned per saved
-   server. On first connection the owner (or a manager) is shown the fingerprint and must explicitly trust it; people with
-   `use` access cannot trust on first use and are refused until the owner has. The ticket also carries which credentials
-   the connection uses (saved, one of the user's own keys, a one-off key, or a password prompt) and the SSH login name. A changed key is **refused**, shown as a
-   possible attack and audited. Changing a server's host or port clears the pin.
+   server, with its key type, when it was trusted and by whom.
+   - *First connection:* the owner (or a manager) is shown the fingerprint and key type and must explicitly trust it
+     (the dialog says how to check it on the server). People with `use` access cannot trust on first use and are refused
+     until the owner has.
+   - *A changed key is always refused.* The user sees a blocking dialog with the pinned and presented fingerprints side by
+     side, the owner is emailed (once per distinct new key, not per retry), and the attempt is audited as
+     `ssh.host_key_mismatch` with both fingerprints. The new key is parked on the server record as a pending change.
+   - *Accepting it is owner-only* (not managers, not admins), needs the owner's **account password**, and must name the exact
+     fingerprint that was shown, so a key that appears later cannot ride on an earlier review. Audited as
+     `server.host_key_accept` and the owner is emailed again. The owner can instead dismiss the change (`server.host_key_dismiss`),
+     or forget the pin to verify afresh (`server.host_key_forget`, owner-only).
+   - Changing a server's host or port clears the pin and any pending change.
+   - Admins get a read-only **Host keys** page listing every pinned fingerprint, who trusted it, any pending change, and
+     servers pinned to different keys for the same host and port. It exposes no credentials and grants no access.
+   The ticket also carries which credentials the connection uses (saved, one of the user's own keys, a one-off key, or a
+   password prompt) and the SSH login name.
 4. **SSRF guard.** The hostname is resolved once and the vetted IP is what we dial (no DNS rebinding window). Loopback,
    link-local (including cloud metadata `169.254.169.254`), unspecified and multicast addresses are refused unless
    `ANYSSH_ALLOW_LOOPBACK_TARGETS=true`. Private LAN ranges are allowed, since reaching them is the point.
@@ -181,7 +193,7 @@ exposed or trusted with the route to everything.
 ## Runtime settings
 
 Admins can change email (SMTP), session timing (lock, idle sign-out, maximum length), the per-user terminal limit, how long a
-dropped terminal is kept, and the jump hosts on the Settings page. Each group falls back to its environment variable until saved, and can be reset to it. Startup and
+dropped terminal is kept, the jump hosts and brute-force thresholds on the Settings page. Each group falls back to its environment variable until saved, and can be reset to it. Startup and
 security boundary settings stay environment-only on purpose, so a stolen admin session cannot change them: the master
 key, database, allowed origins, public URL (it is the base of emailed links), cookie and proxy flags, and the loopback
 SSRF guard. Note that an admin can point SMTP at any host and port the server can reach.
@@ -208,6 +220,8 @@ host's `any-ssh update` through a CLI inside the container; versions and a short
 - Each row includes the SHA-256 of the previous row (hash chain). **Admin → Audit → Verify integrity** walks the chain
   and reports the first tampered entry, which catches edits made by someone who bypasses the triggers.
 - Secrets are never written to the log. Terminal content is not recorded.
+- **Failed attempts are recorded** for every credential check: sign-in (`auth.login`, with reason `bad_password`, `unknown_user`, `locked`, `disabled`), 2FA (`auth.mfa`), screen unlock (`auth.unlock`), trusted-IP challenge (`auth.ip_challenge`), reset requests (`auth.password_reset_request`), password/email/2FA/recovery-code/key-export confirmations, plus `auth.lockout` and `admin.ip_unlock`.
+- **Setting changes are recorded with old → new values** in `details.changes` (`{field: {from, to}}`): admin Settings (`admin.settings_change`, `admin.settings_reset`; for email only whether the password changed, never its value), admin edits to a user (`admin.user_update`), a user's trusted-IP on/off and policy (`user.trusted_ip_settings`), email changes (`user.email_change`) and display-name changes (`user.profile_update`). Trusted-IP entries added or removed are recorded with the entry.
 
 ## Deployment checklist
 
