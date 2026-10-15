@@ -1,3 +1,4 @@
+import { UpdateBanner } from './UpdateBanner';
 import { useCallback, useEffect, useState } from 'react';
 import { get, post, setIpChallengeHandler, setLockedHandler, setUnauthenticatedHandler, type ConnectChoice, type Server, type User } from './api';
 import { LockScreen, useIdleLock } from './lock';
@@ -202,6 +203,8 @@ export function App() {
           Sign out
         </button>
       </header>
+
+      <UpdateBanner />
 
       {terminals.length > 0 && (
         <div className="terminal-tabs" role="tablist">

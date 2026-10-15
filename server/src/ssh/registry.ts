@@ -40,6 +40,8 @@ export interface LiveTerminal {
   close(reason: string): void;
   /** Pauses (locked) or resumes the terminal while its web session is locked. */
   setLocked(locked: boolean): void;
+  /** Shows a one-line notice in the terminal if a browser is attached. */
+  notify(message: string): void;
 }
 
 /**
@@ -117,6 +119,10 @@ export class TerminalRegistry {
 
   setLockedForSession(idHash: string, locked: boolean): void {
     for (const t of this.live) if (t.sessionIdHash === idHash) t.setLocked(locked);
+  }
+
+  notifyAll(message: string): void {
+    for (const t of this.live) t.notify(message);
   }
 
   closeAll(reason: string): void {

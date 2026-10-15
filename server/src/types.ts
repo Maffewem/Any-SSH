@@ -9,6 +9,7 @@ import type { SessionStore } from './sessions.js';
 import type { Settings } from './settings.js';
 import type { TerminalRegistry } from './ssh/registry.js';
 import type { UpdateChecker } from './updates.js';
+import type { UpdateRequests } from './updateRequests.js';
 
 export type Role = 'admin' | 'user';
 
@@ -130,6 +131,7 @@ export interface AppContext {
   mailer: Mailer;
   settings: Settings;
   updates: UpdateChecker;
+  updateRequests: UpdateRequests;
   backups: BackupService;
 }
 

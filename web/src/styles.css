@@ -183,3 +183,11 @@ td.details { max-width: 360px; overflow-wrap: anywhere; color: var(--muted); }
   .modal { max-width: none; border-radius: var(--radius) var(--radius) 0 0; padding-bottom: max(1.25rem, env(safe-area-inset-bottom)); }
   .app.terminal-mode .topbar { display: none; }
 }
+
+.update-banner {
+  padding: 0.5rem 1rem;
+  background: var(--warn);
+  color: #1a1400;
+  font-size: 0.9rem;
+  text-align: center;
+}

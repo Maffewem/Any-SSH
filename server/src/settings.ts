@@ -3,6 +3,7 @@ import { BackupFormatError, backupKeyId, parsePublicKey } from './backup/format.
 import type { Config, SmtpConfig } from './config.js';
 import type { SecretBox } from './crypto.js';
 import type { DB } from './db.js';
+import { DEFAULT_MAINTENANCE, validTimezone, type MaintenanceWindow } from './maintenance.js';
 
 /**
  * Runtime settings an administrator can change from the web UI. Each group falls back to the
@@ -59,8 +60,16 @@ export const securitySettingsSchema = z.object({
   notifyOwner: z.boolean(),
 });
 
-export type SettingsGroup = 'mail' | 'sessions' | 'limits' | 'security' | 'backup';
+export type SettingsGroup = 'mail' | 'sessions' | 'limits' | 'security' | 'backup' | 'maintenance';
 export type SettingsSource = 'environment' | 'web';
+
+export const maintenanceSettingsSchema = z.object({
+  enabled: z.boolean(),
+  days: z.array(z.number().int().min(0).max(6)).max(7).transform((d) => [...new Set(d)].sort()),
+  start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM'),
+  durationMinutes: z.number().int().min(15).max(24 * 60),
+  timezone: z.string().max(64).refine(validTimezone, 'Unknown timezone (use a name like Europe/London)'),
+}).refine((m) => !m.enabled || m.days.length > 0, { message: 'Choose at least one day.', path: ['days'] });
 
 export const settingContext = (id: string) => `setting:${id}`;
 
@@ -345,6 +354,15 @@ export class Settings {
     return { changed, changes };
   }
 
+  get maintenance(): MaintenanceWindow {
+    const row = this.row('maintenance');
+    return row ? { ...DEFAULT_MAINTENANCE, ...(JSON.parse(row.value) as Partial<MaintenanceWindow>) } : DEFAULT_MAINTENANCE;
+  }
+
+  setMaintenance(input: MaintenanceWindow, actorId: string): void {
+    this.write('maintenance', JSON.stringify(maintenanceSettingsSchema.parse(input)), null, actorId);
+  }
+
   get security(): SecuritySettings {
     const row = this.row('security');
     return row ? { ...DEFAULT_SECURITY, ...(JSON.parse(row.value) as Partial<SecuritySettings>) } : DEFAULT_SECURITY;
@@ -378,6 +396,7 @@ export class Settings {
       sessions: { source: this.source('sessions'), ...this.sessions },
       limits: { source: this.source('limits'), ...this.limits },
       security: { source: this.source('security'), ...this.security },
+      maintenance: { source: this.source('maintenance'), ...this.maintenance },
       backup: this.describeBackup(),
     };
   }

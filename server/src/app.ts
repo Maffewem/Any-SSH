@@ -31,6 +31,8 @@ import { TerminalRegistry } from './ssh/registry.js';
 import { registerTerminalRoute } from './ssh/terminal.js';
 import type { AppContext } from './types.js';
 import { UpdateChecker } from './updates.js';
+import { UpdateRequests } from './updateRequests.js';
+import { updateNoticeText } from './routes/version.js';
 import { registerVersionRoutes } from './routes/version.js';
 
 /** Header the web client sends on every state-changing request (see docs/SECURITY.md, CSRF). */
@@ -73,6 +75,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   const ctx: AppContext = {
     config, db, box, audit, bruteForce: new BruteForce(db, settings, audit), sessions, terminals, mailer, settings,
     updates: new UpdateChecker(config, app.log, opts.updates),
+    updateRequests: new UpdateRequests(db),
     backups: new BackupService({ db, settings, box, audit, mailer, config, log: app.log }),
   };
   const stale = countStale(db, ctx.box);
@@ -174,8 +177,18 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
     ctx.bruteForce.purge();
   }, 10 * 60_000);
   purge.unref();
+  // Warn people with open terminals as soon as an update is requested (the host starts it after the warning period).
+  const announce = setInterval(() => {
+    const pending = ctx.updateRequests.pending();
+    if (pending && !pending.announced) {
+      ctx.updateRequests.markAnnounced(pending.id);
+      terminals.notifyAll(updateNoticeText(pending.scheduledFor));
+    }
+  }, 10_000);
+  announce.unref();
   app.addHook('onClose', async () => {
     clearInterval(purge);
+    clearInterval(announce);
     ctx.updates.stop();
     ctx.backups.stop();
     terminals.closeAll('Server shutting down');
