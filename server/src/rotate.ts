@@ -43,3 +43,21 @@ export function countStale(db: DB, box: SecretBox): number {
   }
   return stale;
 }
+
+/** Tries to open every sealed value with the current keys. Used to prove a restored database matches the master key. */
+export function checkSecrets(db: DB, box: SecretBox): { checked: number; failed: number } {
+  let checked = 0;
+  let failed = 0;
+  for (const { table, column, context } of SEALED_COLUMNS) {
+    const rows = db.prepare(`SELECT id, ${column} AS sealed FROM ${table} WHERE ${column} IS NOT NULL`).all() as { id: string; sealed: string }[];
+    for (const row of rows) {
+      checked++;
+      try {
+        box.open(row.sealed, context(row.id));
+      } catch {
+        failed++;
+      }
+    }
+  }
+  return { checked, failed };
+}

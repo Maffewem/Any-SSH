@@ -7,7 +7,7 @@ import { emails } from '../mail.js';
 import { limitSettingsSchema, mailSettingsSchema, sessionSettingsSchema, type SettingsGroup } from '../settings.js';
 import type { AppContext } from '../types.js';
 
-const groupParam = z.object({ group: z.enum(['mail', 'sessions', 'limits']) });
+const groupParam = z.object({ group: z.enum(['mail', 'sessions', 'limits', 'backup']) });
 
 /** Admin-only runtime settings. Every change is audited; secrets are write-only. */
 export function registerSettingsRoutes(app: FastifyInstance, ctx: AppContext): void {

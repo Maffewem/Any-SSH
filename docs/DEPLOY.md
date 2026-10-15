@@ -50,7 +50,10 @@ The installer adds an `any-ssh` command:
 | `sudo any-ssh update` | Backs up, downloads the latest version and restarts. Open terminals drop and users reconnect, so pick a quiet time. |
 | `any-ssh update-log` | Shows the update history: every manual or automatic update, with result (updated, failed, rolled back), versions and who started it. Also kept in the app (Settings → Update history, and the audit log) and in `/opt/any-ssh/update.log`. |
 | `sudo any-ssh auto-update on` | Installs updates by itself: a systemd timer checks daily around 04:00 and updates only if a newer image was published. `off` / `status` also work. Off by default. |
-| `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). |
+| `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). Encrypted once a recovery key is set (see Backups). `--push` also stores one at the off-server destination. |
+| `any-ssh backup-key` | Makes a recovery key pair for backup encryption. |
+| `any-ssh verify-backup <file> <secret-key-file>` | Decrypts a backup and checks it is complete and matches this server's master key. Changes nothing. |
+| `sudo any-ssh restore <file> <secret-key-file>` | Verifies a backup, then replaces the database with it (the old one is kept beside it). |
 | `sudo any-ssh config` | Edits the settings, e.g. to add SMTP later, and applies them. |
 | `sudo any-ssh doctor` | Checks the domain's public DNS, this server's public IP and the HTTPS certificate, and says what to fix. |
 | `any-ssh status`, `any-ssh logs`, `any-ssh version` | Health, logs and the running version. |
@@ -118,7 +121,7 @@ The master key decrypts every stored SSH key and password. Treat it like a root 
 
 Rules:
 
-- **Never store the key next to the database backups.** A backup is useless without the key, which is the point.
+- **Never store the key next to the database backups, and never next to the backup recovery key.** A backup is useless without the master key, and unreadable without the recovery key; keep them in different places.
 - **Lose the key and the stored SSH keys, passwords and 2FA seeds are gone.** Users would have to re-import keys and
   re-enrol 2FA, so keep two separate copies.
 - **Rotate the key** if it may have been exposed, or on a schedule. See the README for the steps;
@@ -127,15 +130,70 @@ Rules:
 ## Backups
 
 Everything except the master key is in one SQLite database on the `any-ssh-data` volume. The installer backs it up
-nightly to `/opt/any-ssh/backups`; `sudo any-ssh backup` does it on demand. Backups are consistent even while people
-are using Any-SSH.
+nightly to `/opt/any-ssh/backups` and before every update; `sudo any-ssh backup` does it on demand. Backups are consistent
+even while people are using Any-SSH. A copy on the same disk is not a backup for disk failure, theft or a compromised
+server, so set up encrypted off-server backups (below).
 
-Ship those files offsite too (S3/B2 with versioning, or `restic`), and never alongside the master key. Test a restore now
-and then: stop the stack (`any-ssh stop`), copy the backup into the volume as `/data/any-ssh.db`, start it again, and sign
-in.
+### Encrypted off-server backups
 
-Without the installer: `docker compose exec app npm run backup` writes to `/data/backups` inside the volume, and
-`docker compose cp app:/data/backups ./backups` copies them out.
+In the app: **Settings → Backups** (admins only).
+
+1. **Make a recovery key.** Press *Generate a key pair*, or run `any-ssh backup-key` on a trusted machine so the secret half
+   never touches this server. Save the **secret key** in a password manager, **apart from the master key** (you need both to
+   restore, and anyone holding both can read everything). The server keeps only the public key, so a stolen server or
+   stolen bucket cannot decrypt backups.
+2. **Choose a destination.**
+   - *S3-compatible storage*: AWS S3, Backblaze B2, Cloudflare R2, Wasabi, MinIO. Give the endpoint (empty for AWS), region,
+     bucket, folder and an access key. Use a key that can only write to that bucket; turn on bucket versioning or object lock
+     if you want protection from deletion too.
+   - *SFTP*: host, port, username, folder, a password or private key, and the server's **host key fingerprint**
+     (`ssh-keyscan host | ssh-keygen -lf -`). No connection is made until it is entered; *Test destination* shows what the
+     server presents.
+   - *This server only*: keeps encrypted copies in the data volume. Better than nothing, not a disaster backup.
+3. **Schedule and retention.** Hourly, daily (at a UTC hour) or weekly, and how many backups to keep. After each successful
+   backup, older ones beyond that number are deleted from the destination. A slot missed while the server was off runs when it
+   is back, and a failure is retried a few times at 30 minute intervals.
+4. Press **Test destination**, then **Back up now**.
+
+Changing the key or destination asks for your password again, and saved credentials are dropped if you point at a different
+bucket or server without entering new ones.
+
+Each backup is a file `any-ssh-<UTC time>.anybak`. Before it is encrypted, the snapshot is checked (SQLite integrity, schema,
+the audit log's hash chain, and that the master key opens every stored secret), so a damaged database is reported rather
+than quietly backed up. After upload the destination's reported size must match.
+
+**Failures are not silent.** The Settings page shows the last result, the next run, the full history and a warning when no
+backup has succeeded for two schedule periods. Every admin with an email address gets an email when a backup fails (at most
+one a day while it keeps failing), and each run is in the audit log (`backup.run`).
+
+For a scripted or one-off push: `sudo any-ssh backup --push`, or `docker compose exec app node dist/cli/backup.js run`.
+
+### Restoring
+
+You need three things: the `.anybak` file, the **recovery secret key**, and the **master key** this server was using when the
+backup was made (the database holds your SSH keys and passwords sealed under it).
+
+```bash
+# 1. Check a backup without changing anything (do this now, then now and then):
+any-ssh verify-backup /path/any-ssh-20261015T031700Z.anybak /path/recovery-secret.txt
+# 2. Restore it on the server (stops Any-SSH, replaces the database, starts it again):
+sudo any-ssh restore /path/any-ssh-20261015T031700Z.anybak /path/recovery-secret.txt
+```
+
+`verify-backup` and `restore` decrypt, authenticate every byte, and run the same checks as above against this server's master
+key, so you find out about a wrong key or damaged file *before* anything is replaced. Restore keeps the previous database
+beside the new one and takes a fresh backup first. To restore on a new server: run the installer, put the old master key
+in `secrets/master_key`, then run `sudo any-ssh restore …`.
+
+Restoring is deliberately not offered in the web UI: it replaces everything, including the accounts that would be used to
+click the button, and needs the secret key, which should never be typed into a server that may be compromised.
+
+Without the installer: `docker compose exec app node dist/cli/backup.js file` writes a backup into `/data/backups`
+(encrypted if a key is set), and `docker compose run --rm --no-deps -T -e ANYSSH_BACKUP_KEY app node dist/cli/backup.js restore - --verify-only < backup.anybak`
+checks one.
+
+Backups made before a key was set are plain `.db` files. Restore them by stopping the stack and copying the file into the
+volume as `/data/any-ssh.db`.
 
 For continuous backup with point-in-time restore, add [Litestream](https://litestream.io) as a sidecar that streams the
 SQLite WAL to object storage. That is the cheapest way to keep data loss to seconds without moving off SQLite.

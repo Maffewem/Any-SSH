@@ -25,6 +25,47 @@ export interface SettingsView {
   };
   sessions: { source: 'environment' | 'web'; lockMinutes: number; idleMinutes: number; maxHours: number };
   limits: { source: 'environment' | 'web'; maxTerminalsPerUser: number };
+  backup: BackupSettingsView;
+}
+
+export type BackupTargetView =
+  | { kind: 'none' }
+  | { kind: 'local' }
+  | { kind: 's3'; endpoint: string; region: string; bucket: string; prefix: string; accessKeyId: string; pathStyle: boolean; hasSecretKey: boolean }
+  | { kind: 'sftp'; host: string; port: number; username: string; path: string; hostKeyFingerprint: string; hasPassword: boolean; hasPrivateKey: boolean };
+
+export interface BackupSettingsView {
+  enabled: boolean;
+  frequency: 'hourly' | 'daily' | 'weekly';
+  hourUtc: number;
+  weekday: number;
+  keep: number;
+  publicKey: string;
+  keyId: string | null;
+  target: BackupTargetView;
+}
+
+export interface BackupRunView {
+  id: string;
+  startedAt: number;
+  finishedAt: number | null;
+  trigger: 'schedule' | 'manual' | 'cli';
+  outcome: 'running' | 'success' | 'failure';
+  name: string | null;
+  bytes: number | null;
+  destination: string | null;
+  error: string | null;
+  warning: string | null;
+}
+
+export interface BackupStatusView {
+  configured: boolean;
+  scheduled: boolean;
+  running: boolean;
+  last: BackupRunView | null;
+  lastSuccess: BackupRunView | null;
+  nextRunAt: number | null;
+  stale: boolean;
 }
 
 export type Access = 'owner' | 'manage' | 'use';

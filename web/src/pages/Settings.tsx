@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { del, errorMessage, get, post, put, type SettingsView } from '../api';
 import { Field, Form, useAsync } from '../ui';
+import { BackupSection } from './Backups';
 import { VersionCard } from './Version';
 
 function SourceBadge({ source }: { source: 'environment' | 'web' }) {
@@ -42,6 +43,7 @@ export function SettingsPage() {
           <MailSection key={`mail-${resets}`} view={current} onSaved={onSaved} />
           <SessionSection key={`sessions-${resets}`} view={current} onSaved={onSaved} />
           <LimitsSection key={`limits-${resets}`} view={current} onSaved={onSaved} />
+          <BackupSection key={`backup-${resets}`} view={current} onSaved={onSaved} />
           <VersionCard />
         </>
       )}

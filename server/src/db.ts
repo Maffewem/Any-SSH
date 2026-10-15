@@ -176,7 +176,28 @@ const MIGRATIONS: string[] = [
     attempts      INTEGER NOT NULL DEFAULT 0
   );
   `,
+  `
+  -- Backup history, for the Settings page and for scheduling. Holds names, sizes and error text only.
+  CREATE TABLE backup_runs (
+    id           TEXT PRIMARY KEY,
+    started_at   INTEGER NOT NULL,
+    finished_at  INTEGER,
+    trigger      TEXT NOT NULL CHECK (trigger IN ('schedule', 'manual', 'cli')),
+    outcome      TEXT NOT NULL CHECK (outcome IN ('running', 'success', 'failure')),
+    name         TEXT,
+    bytes        INTEGER,
+    sha256       TEXT,
+    destination  TEXT,
+    key_id       TEXT,
+    error        TEXT,
+    warning      TEXT,
+    notified     INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX backup_runs_started ON backup_runs(started_at);
+  `,
 ];
+
+export const SCHEMA_VERSION = MIGRATIONS.length;
 
 export function openDatabase(file: string): DB {
   if (file !== ':memory:') mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });

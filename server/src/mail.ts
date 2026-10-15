@@ -122,6 +122,17 @@ export const emails = {
       text: `Hi ${p.displayName},\n\n${p.sentBy} sent this test from the Any-SSH settings page. Email delivery is working.` + footer,
     };
   },
+  backupFailed(p: { to: string; displayName: string; destination: string; error: string }): MailMessage {
+    return {
+      to: p.to,
+      subject: 'Any-SSH backup failed',
+      text:
+        `Hi ${p.displayName},\n\nThe latest Any-SSH backup to ${p.destination} did not complete.\n\nWhat went wrong: ${p.error}\n\n` +
+        'Until this is fixed there may be no recent backup. Open Settings → Backups to see the history and run a test. ' +
+        'Further failures are not emailed again for 24 hours.' +
+        footer,
+    };
+  },
   securityNotice(p: { to: string; displayName: string; what: string }): MailMessage {
     return {
       to: p.to,
