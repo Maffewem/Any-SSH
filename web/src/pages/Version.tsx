@@ -18,11 +18,24 @@ interface VersionInfo {
   error: string | null;
 }
 
+interface HistoryEntry {
+  id: number;
+  ts: number;
+  result: 'success' | 'failure' | 'rolled_back';
+  trigger: 'manual' | 'auto';
+  from: string;
+  to: string;
+  note: string | null;
+}
+
+const RESULT_LABEL = { success: 'Updated', failure: 'Failed', rolled_back: 'Rolled back' } as const;
+
 const short = (c: string | null) => (c ? c.slice(0, 7) : 'unknown');
 
 /** Admin-only: what is running, and whether a newer build has been published. Applying updates happens on the host. */
 export function VersionCard() {
   const { data } = useAsync(() => get<VersionInfo>('/api/admin/version'), []);
+  const history = useAsync(() => get<{ updates: HistoryEntry[] }>('/api/admin/version/history'), []);
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<VersionInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +85,40 @@ export function VersionCard() {
         {v.autoUpdate ? 'Automatic updates: on.' : 'Automatic updates: off (any-ssh auto-update on).'}
       </p>
       {(error || v.error) && <p className="error small">{error ?? `Last check failed: ${v.error}`}</p>}
+      <div className="subsection">
+        <h3>Update history</h3>
+        {history.data && history.data.updates.length === 0 && <p className="muted small">No updates recorded yet. Updates run with <code>sudo any-ssh update</code> or automatically are listed here (and in the audit log).</p>}
+        {history.data && history.data.updates.length > 0 && (
+          <div className="table-wrap" style={{ width: '100%' }}>
+            <table className="small">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Result</th>
+                  <th>Version</th>
+                  <th>Started by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.data.updates.map((u) => (
+                  <tr key={u.id} className={u.result === 'success' ? '' : 'failure'}>
+                    <td>{formatTime(u.ts)}</td>
+                    <td>
+                      {RESULT_LABEL[u.result] ?? u.result}
+                      {u.note && <div className="muted">{u.note}</div>}
+                    </td>
+                    <td>
+                      {u.from} → {u.to}
+                    </td>
+                    <td>{u.trigger === 'auto' ? 'Automatic update' : 'Manual'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {history.error && <p className="error small">{history.error}</p>}
+      </div>
     </div>
   );
 }

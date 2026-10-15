@@ -16,6 +16,7 @@ Usage: any-ssh <command>
 
   update        Back up, then download the latest version and restart (open terminals reconnect).
                 If the new version doesn't start, the previous one is put back
+  update-log    Show the history of updates (also on the Settings page in the app)
   auto-update   on | off | status: install updates by itself, daily. Off unless you turn it on
   backup        Save a copy of the database to $DIR/backups (keeps the newest $KEEP_BACKUPS)
   status        Show whether it is running and healthy
@@ -133,6 +134,17 @@ doctor() {
   return "$status"
 }
 
+# Update history: one line in $DIR/update.log on the host, and one entry in the app's audit log (shown on the
+# Settings page). Best effort, never stops an update. Holds versions and a short note, no secrets.
+image_label() { docker image inspect -f '{{or (index .Config.Labels "org.opencontainers.image.version") "unknown"}} ({{printf "%.7s" (or (index .Config.Labels "org.opencontainers.image.revision") "unknown")}})' "$1" 2>/dev/null || echo unknown; }
+record_update() {
+  local result="$1" trigger="$2" from="$3" to="$4" note="${5:-}"
+  install -d -m 700 "$DIR" 2>/dev/null || true
+  printf '%s %s %s by %s: %s -> %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$result" "$trigger" "${SUDO_USER:-${USER:-root}}" "$from" "$to" "$note" >>"$DIR/update.log" 2>/dev/null || true
+  chmod 600 "$DIR/update.log" 2>/dev/null || true
+  dc exec -T app node dist/cli/record-update.js "$result" "$trigger" "$from" "$to" "$note" >/dev/null 2>&1 || true
+}
+
 running() { [ -n "$(dc ps -q --status running app 2>/dev/null || true)" ]; }
 
 backup() {
@@ -157,10 +169,12 @@ app_image() { dc config --images 2>/dev/null | grep -m1 'any-ssh:' || true; }
 # Back up, pull the new image, restart, and put the old image back if the new one doesn't become healthy.
 # update-if-newer (used by the timer) does nothing unless a newer image was published.
 update_app() {
-  local mode="$1" old_id new_id image tmp
+  local mode="$1" old_id new_id image tmp trigger=manual from to
+  [ "$mode" = update-if-newer ] && trigger=auto
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
   old_id="$(image_id)"
+  from="$(image_label "$old_id")"
   image="$(app_image)"
   if [ "$mode" = update-if-newer ]; then
     dc pull --quiet app 2>/dev/null || { say "Couldn't reach the registry; will try again later"; return 0; }
@@ -169,8 +183,12 @@ update_app() {
   fi
   backup
   say "Downloading the latest version"
-  dc pull --quiet || die "Couldn't download the new version. Check this server can reach ghcr.io, then try again."
+  if ! dc pull --quiet; then
+    record_update failure "$trigger" "$from" unknown "download failed"
+    die "Couldn't download the new version. Check this server can reach ghcr.io, then try again."
+  fi
   image="$(app_image)"
+  to="$(image_label "$image")"
   # The deployment files come out of the new image (works even if the source repo is private); ANYSSH_SOURCE overrides.
   fetch compose.yaml "$tmp/compose.yaml" "$image"
   fetch deploy/Caddyfile "$tmp/Caddyfile" "$image"
@@ -185,13 +203,16 @@ update_app() {
       docker tag "$old_id" "$image"
       dc up -d --no-deps app
       wait_healthy
+      record_update rolled_back "$trigger" "$from" "$to" "new version did not become healthy; previous version restored"
       die "Rolled back to the previous version. The backup taken before this update is in $DIR/backups. Run 'any-ssh logs' to see why."
     fi
+    record_update failure "$trigger" "$from" "$to" "new version did not become healthy; no previous version to restore"
     die "The new version didn't start and there was no previous image to go back to."
   fi
   # Replaced last: install writes a new file, so this running copy is unaffected.
   install -m 755 "$tmp/any-ssh" /usr/local/bin/any-ssh
   docker image prune -f >/dev/null || true
+  record_update success "$trigger" "$from" "$to"
   say "Updated and running"
 }
 
@@ -279,6 +300,7 @@ case "${1:-help}" in
     update_app "$1"
     ;;
   auto-update) need_root auto-update; auto_update "${2:-status}" ;;
+  update-log) [ -r "$DIR/update.log" ] && tail -n 50 "$DIR/update.log" || echo "No updates recorded yet." ;;
   backup) need_root backup; backup ;;
   status) dc ps ;;
   doctor) doctor ;;

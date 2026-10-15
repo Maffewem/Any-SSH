@@ -286,6 +286,7 @@ export function AuditPage() {
         <option value="server.">Servers</option>
         <option value="key.">Keys</option>
         <option value="admin.">Administration</option>
+        <option value="system.">Software updates</option>
         <option value="user.">Account changes</option>
       </select>
       {error && <p className="error">{error}</p>}

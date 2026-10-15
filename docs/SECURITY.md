@@ -157,7 +157,8 @@ SSRF guard. Note that an admin can point SMTP at any host and port the server ca
 
 Append-only table recording sign-ins (and failures with reason), MFA changes, password changes, admin actions, key
 creation/deletion/export, server changes, share grants/changes/revocations, host-key trust/mismatch, and SSH session start/end
-(with duration and byte count). Each entry stores the actor's ID **and** username so history survives account deletion.
+(with duration and byte count), and software updates (`system.update`: result, trigger, from/to version, recorded by the
+host's `any-ssh update` through a CLI inside the container; versions and a short note only). Each entry stores the actor's ID **and** username so history survives account deletion.
 
 - SQLite triggers reject `UPDATE`/`DELETE` on the table.
 - Each row includes the SHA-256 of the previous row (hash chain). **Admin → Audit → Verify integrity** walks the chain
