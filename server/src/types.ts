@@ -70,6 +70,14 @@ export interface ServerRow {
   key_id: string | null;
   password_enc: string | null;
   host_key_fingerprint: string | null;
+  host_key_type: string | null;
+  host_key_pinned_at: number | null;
+  /** Username of whoever trusted the pinned key. */
+  host_key_pinned_by: string | null;
+  /** A different key the server presented; refused until the owner accepts or dismisses it. */
+  host_key_pending: string | null;
+  host_key_pending_type: string | null;
+  host_key_pending_at: number | null;
   notes: string;
   created_at: number;
   updated_at: number;
