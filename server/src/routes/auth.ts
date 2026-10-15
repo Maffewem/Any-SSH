@@ -13,6 +13,7 @@ import {
   sessionToken,
   setSessionCookie,
 } from '../http.js';
+import { assertIpAllowed, recordAuthFailure, recordReauthFailure } from '../bruteForce.js';
 import { checkChallengeCode, checkSessionIp, sendChallengeCode } from '../ipTrust.js';
 import { checkPasswordPolicy, hashPassword, needsRehash, verifyDummy, verifyPassword } from '../passwords.js';
 import {
@@ -24,8 +25,6 @@ import {
 } from '../totp.js';
 import { publicUser, type AppContext, type UserRow } from '../types.js';
 
-const LOCKOUT_THRESHOLD = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;
 const GENERIC_LOGIN_ERROR = 'Invalid username or password.';
 
 const loginBody = z.object({
@@ -49,17 +48,12 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
 
   const getUser = (id: string) => db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow;
 
-  function registerFailure(user: UserRow): void {
-    const failures = user.failed_logins + 1;
-    const lockedUntil = failures % LOCKOUT_THRESHOLD === 0 ? Date.now() + LOCKOUT_MS : user.locked_until;
-    db.prepare('UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?').run(failures, lockedUntil, user.id);
-  }
-
   function completeLogin(user: UserRow, ip: string, ua: string | null): string {
     db.prepare('UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = ? WHERE id = ?').run(
       Date.now(),
       user.id,
     );
+    ctx.bruteForce.clearUser(user.id);
     return sessions.create(user.id, 'full', ip, ua);
   }
 
@@ -95,11 +89,13 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
   app.post('/api/auth/login', loginRateLimit, async (req, reply) => {
     const body = parse(loginBody, req.body);
     const ip = clientIp(req);
+    assertIpAllowed(ctx, ip);
     const ua = req.headers['user-agent'] ?? null;
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(body.username) as UserRow | undefined;
 
     if (!user) {
       await verifyDummy(body.password);
+      recordAuthFailure(ctx, req.log, ip, 'login');
       audit.record({ action: 'auth.login', outcome: 'failure', ip, details: { username: body.username, reason: 'unknown_user' } });
       throw new HttpError(401, GENERIC_LOGIN_ERROR, 'invalid_credentials');
     }
@@ -107,7 +103,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const locked = user.locked_until !== null && user.locked_until > Date.now();
     const passwordOk = await verifyPassword(user.password_hash, body.password);
     if (locked || !passwordOk || user.status !== 'active') {
-      if (!locked && !passwordOk) registerFailure(user);
+      if (!locked && !passwordOk) recordAuthFailure(ctx, req.log, ip, 'login', user);
       const reason = locked ? 'locked' : !passwordOk ? 'bad_password' : 'disabled';
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.login', outcome: 'failure', ip, details: { reason } });
       throw new HttpError(401, GENERIC_LOGIN_ERROR, 'invalid_credentials');
@@ -139,11 +135,12 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (!auth || auth.session.stage !== 'mfa') throw new HttpError(401, 'Sign in again', 'unauthenticated');
     const body = parse(mfaBody, req.body);
     const ip = clientIp(req);
+    assertIpAllowed(ctx, ip);
     const user = auth.user;
 
     const ok = 'code' in body ? checkTotp(user, body.code) : useRecoveryCode(user, body.recoveryCode);
     if (!ok) {
-      registerFailure(user);
+      recordAuthFailure(ctx, req.log, ip, 'mfa', user);
       const fresh = getUser(user.id);
       // Too many bad codes: throw away the half-finished login so the password is needed again.
       if (fresh.locked_until && fresh.locked_until > Date.now()) sessions.destroyByHash(auth.session.id_hash);
@@ -218,10 +215,12 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (session.locked_at === null) return { user: publicUser(user) };
     const { password } = parse(confirmPasswordBody, req.body);
     const ip = clientIp(req);
+    assertIpAllowed(ctx, ip);
     const accountLocked = user.locked_until !== null && user.locked_until > Date.now();
     if (accountLocked || !(await verifyPassword(user.password_hash, password))) {
-      const ended = accountLocked || sessions.unlockFailed(session);
-      if (accountLocked) sessions.destroyByHash(session.id_hash);
+      if (!accountLocked) recordAuthFailure(ctx, req.log, ip, 'unlock', user);
+      const ended = accountLocked || sessions.unlockFailed(session) || getUser(user.id).locked_until !== null;
+      if (ended) sessions.destroyByHash(session.id_hash);
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.unlock', outcome: 'failure', ip, details: { ended } });
       if (ended) {
         clearSessionCookie(ctx, reply);
@@ -238,6 +237,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const { user, session } = requireUser(req, { allowPendingPasswordChange: true });
     const body = parse(passwordBody, req.body);
     if (!(await verifyPassword(user.password_hash, body.currentPassword))) {
+      recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.password_change', outcome: 'failure', ip: clientIp(req) });
       throw badRequest('Current password is incorrect.');
     }
@@ -288,7 +288,11 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
   app.post('/api/auth/mfa/setup', async (req) => {
     const { user } = requireUser(req);
     const body = parse(confirmPasswordBody, req.body);
-    if (!(await verifyPassword(user.password_hash, body.password))) throw badRequest('Password is incorrect.');
+    if (!(await verifyPassword(user.password_hash, body.password))) {
+      recordReauthFailure(ctx, req.log, clientIp(req), user);
+      audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.mfa_setup', outcome: 'failure', ip: clientIp(req) });
+      throw badRequest('Password is incorrect.');
+    }
     if (user.totp_enabled) throw badRequest('Two-factor authentication is already on.');
     const secret = generateTotpSecret();
     db.prepare('UPDATE users SET totp_secret_enc = ?, totp_last_counter = NULL WHERE id = ?').run(
@@ -316,6 +320,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const body = parse(confirmPasswordAndCodeBody, req.body);
     if (!user.totp_enabled) throw badRequest('Two-factor authentication is not on.');
     if (!(await verifyPassword(user.password_hash, body.password)) || !checkTotp(user, body.code)) {
+      recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.mfa_disable', outcome: 'failure', ip: clientIp(req) });
       throw badRequest('Password or code is incorrect.');
     }
@@ -333,6 +338,8 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const body = parse(confirmPasswordAndCodeBody, req.body);
     if (!user.totp_enabled) throw badRequest('Two-factor authentication is not on.');
     if (!(await verifyPassword(user.password_hash, body.password)) || !checkTotp(user, body.code)) {
+      recordReauthFailure(ctx, req.log, clientIp(req), user);
+      audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.recovery_codes_regenerate', outcome: 'failure', ip: clientIp(req) });
       throw badRequest('Password or code is incorrect.');
     }
     const recoveryCodes = issueRecoveryCodes(user.id);
@@ -374,6 +381,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const { user, session } = heldSession(req);
     const body = parse(challengeBody, req.body);
     const ip = clientIp(req);
+    assertIpAllowed(ctx, ip);
     let ok = false;
     let method = 'email';
     if ('recoveryCode' in body) {
@@ -392,7 +400,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
       }
     }
     if (!ok) {
-      registerFailure(user);
+      recordAuthFailure(ctx, req.log, ip, 'challenge', user);
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.ip_challenge', outcome: 'failure', ip });
       const fresh = getUser(user.id);
       if (fresh.locked_until && fresh.locked_until > Date.now()) sessions.destroyByHash(session.id_hash);

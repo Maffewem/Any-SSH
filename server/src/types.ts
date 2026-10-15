@@ -1,4 +1,5 @@
 import type { AuditLog } from './audit.js';
+import type { BruteForce } from './bruteForce.js';
 import type { Config } from './config.js';
 import type { SecretBox } from './crypto.js';
 import type { DB } from './db.js';
@@ -104,6 +105,7 @@ export interface AppContext {
   db: DB;
   box: SecretBox;
   audit: AuditLog;
+  bruteForce: BruteForce;
   sessions: SessionStore;
   terminals: TerminalRegistry;
   mailer: Mailer;

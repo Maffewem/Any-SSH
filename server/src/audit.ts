@@ -27,6 +27,13 @@ export interface AuditRow {
   hash: string;
 }
 
+/** Old → new for each field that differs. For audit `details`; never pass secrets. */
+export function changes<T extends Record<string, unknown>>(before: T, after: T): Record<string, { from: unknown; to: unknown }> {
+  const out: Record<string, { from: unknown; to: unknown }> = {};
+  for (const k of Object.keys(after)) if (before[k] !== after[k]) out[k] = { from: before[k] ?? null, to: after[k] ?? null };
+  return out;
+}
+
 const GENESIS = '0'.repeat(64);
 
 function rowHash(prevHash: string, r: Omit<AuditRow, 'seq' | 'hash' | 'prev_hash'>): string {

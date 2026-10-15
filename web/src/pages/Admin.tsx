@@ -282,6 +282,7 @@ export function AuditPage() {
       <select className="search" value={filter} onChange={(e) => setFilter(e.target.value)}>
         <option value="">All events</option>
         <option value="auth.">Sign-ins</option>
+        <option value="auth.lockout">Lockouts</option>
         <option value="ssh.">SSH sessions</option>
         <option value="share.">Sharing</option>
         <option value="server.">Servers</option>

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { TOKEN_TTL_MS, consumeToken, findToken, issueToken, notify, tokenUrl } from '../accountTokens.js';
+import { assertIpAllowed, recordAuthFailure, recordReauthFailure } from '../bruteForce.js';
 import { HttpError, badRequest, clientIp, parse, requireUser } from '../http.js';
 import { emails } from '../mail.js';
 import { checkPasswordPolicy, hashPassword, verifyPassword } from '../passwords.js';
@@ -22,6 +23,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
 
   app.post('/api/auth/forgot', strict, async (req) => {
     const { identifier } = parse(z.object({ identifier: z.string().trim().min(1).max(254) }), req.body);
+    assertIpAllowed(ctx, clientIp(req));
     const user = db
       .prepare("SELECT * FROM users WHERE (username = ? OR email = ? COLLATE NOCASE) AND status = 'active'")
       .get(identifier, identifier) as UserRow | undefined;
@@ -44,6 +46,8 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
       // Not awaited: response time must not reveal whether an email was sent.
       ctx.mailer.send(msg).catch((err: unknown) => req.log.warn({ err }, 'Failed to send password reset email'));
     }
+    // Guessing identifiers counts against the address (never against the account: that would let anyone lock a victim out).
+    if (!user) recordAuthFailure(ctx, req.log, clientIp(req), 'reset');
     audit.record({
       actorId: user?.id ?? null, actorUsername: user?.username ?? null, action: 'auth.password_reset_request', ip: clientIp(req),
       outcome: user?.email ? 'success' : 'failure',
@@ -56,14 +60,18 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
 
   app.post('/api/auth/token/check', strict, async (req) => {
     const { token } = parse(tokenBody, req.body);
+    assertIpAllowed(ctx, clientIp(req));
     const found = findToken(ctx, token);
+    if (!found) recordAuthFailure(ctx, req.log, clientIp(req), 'reset');
     if (!found) throw new HttpError(400, 'This link is invalid or has expired. Ask for a new one.', 'invalid_token');
     return { purpose: found.row.purpose, username: found.user.username, displayName: found.user.display_name };
   });
 
   app.post('/api/auth/token/complete', strict, async (req) => {
     const body = parse(tokenBody.extend({ newPassword: z.string().max(1024) }), req.body);
+    assertIpAllowed(ctx, clientIp(req));
     const found = findToken(ctx, body.token);
+    if (!found) recordAuthFailure(ctx, req.log, clientIp(req), 'reset');
     if (!found) throw new HttpError(400, 'This link is invalid or has expired. Ask for a new one.', 'invalid_token');
     const { row, user } = found;
     const problem = checkPasswordPolicy(body.newPassword, user.username);
@@ -78,6 +86,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
     ).run(hash, now, now, user.id);
     // Any other outstanding links die with this one; every existing session is signed out.
     db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND used_at IS NULL').run(user.id);
+    ctx.bruteForce.clearUser(user.id);
     sessions.destroyAllForUser(user.id);
     terminals.closeForUser(user.id, 'Your password was changed.');
 
@@ -109,6 +118,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
       // Changing where reset links go is as sensitive as changing the password.
       if (!body.password) throw badRequest('Enter your password to change your email address.');
       if (!(await verifyPassword(user.password_hash, body.password))) {
+        recordReauthFailure(ctx, req.log, clientIp(req), user);
         audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.email_change', outcome: 'failure', ip: clientIp(req) });
         throw badRequest('Password is incorrect.');
       }
@@ -123,10 +133,13 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
       Date.now(),
       user.id,
     );
+    if (body.displayName !== undefined && body.displayName !== user.display_name) {
+      audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.profile_update', ip: clientIp(req), details: { displayName: { from: user.display_name, to: body.displayName } } });
+    }
     if (emailChanging) {
       // Pending reset links were addressed to the old mailbox.
       db.prepare("DELETE FROM auth_tokens WHERE user_id = ? AND purpose = 'reset' AND used_at IS NULL").run(user.id);
-      audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.email_change', ip: clientIp(req), details: { email: body.email ?? null } });
+      audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.email_change', ip: clientIp(req), details: { from: user.email, to: body.email ?? null } });
       if (user.email) notify(ctx, req.log, user, `your email address was changed to ${body.email ?? '(none)'}`, user.email);
     }
     return { user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as UserRow) };

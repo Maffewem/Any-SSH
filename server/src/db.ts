@@ -187,6 +187,25 @@ const MIGRATIONS: string[] = [
   ALTER TABLE servers ADD COLUMN host_key_pending_type TEXT;
   ALTER TABLE servers ADD COLUMN host_key_pending_at INTEGER;
   `,
+  `
+  -- Brute-force protection. One row per failed attempt (login, 2FA, unlock, reset, re-auth); rows
+  -- age out of the counting window. ip_lockouts holds addresses that crossed the per-IP threshold.
+  CREATE TABLE auth_failures (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       INTEGER NOT NULL,
+    kind     TEXT NOT NULL,
+    ip       TEXT,
+    user_id  TEXT REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX auth_failures_ip ON auth_failures(ip, ts);
+  CREATE INDEX auth_failures_user ON auth_failures(user_id, ts);
+  CREATE TABLE ip_lockouts (
+    ip            TEXT PRIMARY KEY,
+    locked_until  INTEGER NOT NULL,
+    failures      INTEGER NOT NULL,
+    created_at    INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function openDatabase(file: string): DB {
