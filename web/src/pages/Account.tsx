@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
 import { useState } from 'react';
-import { del, formatTime, get, patch, post, type User } from '../api';
+import { del, errorMessage, formatTime, get, patch, post, put, type User } from '../api';
 import { Field, Form, SecretOnce, useAsync } from '../ui';
 import { ChangePasswordForm } from './Auth';
 
@@ -33,6 +33,10 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
         <h2>Password</h2>
         {passwordDone && <p className="ok">Password changed. Your other devices were signed out.</p>}
         <ChangePasswordForm onDone={(u) => (setPasswordDone(true), onUserChange(u))} />
+      </div>
+      <div className="card">
+        <h2>Trusted IP addresses</h2>
+        <TrustedIps user={user} />
       </div>
       <div className="card">
         <h2>Signed-in devices</h2>
@@ -192,6 +196,100 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
           <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" required />
         </Field>
       </Form>
+    </div>
+  );
+}
+
+interface TrustedIpState {
+  enabled: boolean;
+  policy: 'notify' | 'challenge';
+  currentIp: string | null;
+  currentIpTrusted: boolean;
+  canChallenge: boolean;
+  entries: { id: string; cidr: string; label: string; createdAt: number }[];
+}
+
+function TrustedIps({ user }: { user: User }) {
+  const { data, reload } = useAsync(() => get<TrustedIpState>('/api/account/trusted-ips'), [user.email, user.mfaEnabled]);
+  const [cidr, setCidr] = useState('');
+  const [label, setLabel] = useState('');
+  const [policy, setPolicy] = useState<'notify' | 'challenge' | null>(null);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  if (!data) return <p className="muted">Loading…</p>;
+  const chosen = policy ?? data.policy;
+  const run = async (fn: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await fn();
+      setCidr('');
+      setLabel('');
+      reload();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+  return (
+    <div className="stack">
+      <p className="muted">
+        List the networks you normally sign in from. When this is on, a sign-in or an active session from any other address is
+        either reported to you or held until you verify it. Your address as the server sees it:{' '}
+        <code className="mono">{data.currentIp ?? 'unknown'}</code> {data.currentIpTrusted ? <span className="badge accent">trusted</span> : <span className="badge warn">not listed</span>}
+      </p>
+      <ul className="list">
+        {data.entries.map((e) => (
+          <li key={e.id}>
+            <span>
+              <code className="mono">{e.cidr}</code>
+              {e.label && <span className="muted small"> · {e.label}</span>}
+            </span>
+            <button className="ghost" onClick={() => void run(() => del(`/api/account/trusted-ips/${e.id}`))}>
+              Remove
+            </button>
+          </li>
+        ))}
+        {data.entries.length === 0 && <li className="muted">No addresses yet.</li>}
+      </ul>
+      <Field label="Password" hint="Needed to add addresses or change this setting.">
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+      </Field>
+      <div className="row wrap">
+        <input value={cidr} onChange={(e) => setCidr(e.target.value)} placeholder="203.0.113.7 or 203.0.113.0/24" aria-label="IP address or range" />
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (optional)" aria-label="Label" />
+        <button disabled={!cidr || !password} onClick={() => void run(() => post('/api/account/trusted-ips', { cidr, label, password }))}>
+          Add
+        </button>
+        <button
+          disabled={!password || !data.currentIp || data.currentIpTrusted}
+          onClick={() => void run(() => post('/api/account/trusted-ips', { current: true, label: label || 'Added from this device', password }))}
+        >
+          Trust my current IP
+        </button>
+      </div>
+      <Field label="When a sign-in comes from an unlisted address">
+        <select value={chosen} onChange={(e) => setPolicy(e.target.value as 'notify' | 'challenge')}>
+          <option value="notify">Let it in, but email me and record it</option>
+          <option value="challenge" disabled={!data.canChallenge}>
+            Hold it until I verify with a code
+          </option>
+        </select>
+        {!data.canChallenge && <small>Add an email address or turn on two-factor to use this.</small>}
+      </Field>
+      <div className="row wrap">
+        <button className="primary" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: true, policy: chosen }))}>
+          {data.enabled ? 'Save' : 'Turn on'}
+        </button>
+        {data.enabled && (
+          <button className="danger-outline" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: false, policy: chosen }))}>
+            Turn off
+          </button>
+        )}
+        {data.enabled && <span className="ok">On</span>}
+      </div>
+      {error && <p className="error">{error}</p>}
+      <p className="muted small">
+        If you ever lock yourself out (for example after moving), an administrator can switch this off for your account.
+      </p>
     </div>
   );
 }

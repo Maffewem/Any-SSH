@@ -226,6 +226,7 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
               Reset password
             </button>
             {user.mfaEnabled && <button onClick={() => action('Reset two-factor', () => post(`/api/admin/users/${user.id}/reset-mfa`))}>Reset 2FA</button>}
+            <button onClick={() => action('Turn off their trusted IP list', () => post(`/api/admin/users/${user.id}/reset-trusted-ips`))}>Reset trusted IPs</button>
             {user.locked && <button onClick={() => action('Unlock', () => post(`/api/admin/users/${user.id}/unlock`))}>Unlock</button>}
             <button
               className="danger-outline"

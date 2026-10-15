@@ -110,7 +110,8 @@ export class SessionStore {
    */
   state(idHash: string): SessionState {
     const s = this.db.prepare('SELECT * FROM sessions WHERE id_hash = ?').get(idHash) as SessionRow | undefined;
-    if (!s || s.stage !== 'full') return 'dead';
+    // A session held by the trusted-IP challenge is not usable, so live terminals on it close.
+    if (!s || s.stage !== 'full' || s.ip_challenge === 1) return 'dead';
     return this.evaluate(s);
   }
 

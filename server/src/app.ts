@@ -10,12 +10,14 @@ import { AuditLog } from './audit.js';
 import type { Config } from './config.js';
 import { SecretBox, randomToken } from './crypto.js';
 import { openDatabase, type DB } from './db.js';
-import { HttpError, sessionToken } from './http.js';
+import { HttpError, clientIp, sessionToken } from './http.js';
+import { checkSessionIp } from './ipTrust.js';
 import { ConfigurableMailer, type Mailer } from './mail.js';
 import { countStale } from './rotate.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerKeyRoutes } from './routes/keys.js';
+import { registerTrustedIpRoutes } from './routes/trustedIps.js';
 import { registerServerRoutes } from './routes/servers.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerUserRoutes } from './routes/users.js';
@@ -109,6 +111,10 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
     req.auth = sessions.resolve(sessionToken(ctx, req));
     // The lock screen's background state check is not activity; everything else is.
     if (req.auth?.session.stage === 'full' && req.url.split('?')[0] !== '/api/auth/state') sessions.touch(req.auth.session);
+    if (req.auth?.session.stage === 'full') {
+      // Every request (and so every terminal WebSocket upgrade) is checked against the trusted IP list.
+      checkSessionIp(ctx, req.log, req.auth.user, req.auth.session, clientIp(req));
+    }
   });
 
   app.addHook('onSend', async (req, reply) => {
@@ -128,6 +134,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   app.get('/api/health', async () => ({ ok: true }));
   registerAuthRoutes(app, ctx);
   registerAccountRoutes(app, ctx);
+  registerTrustedIpRoutes(app, ctx);
   registerUserRoutes(app, ctx, setup);
   registerKeyRoutes(app, ctx);
   registerServerRoutes(app, ctx);

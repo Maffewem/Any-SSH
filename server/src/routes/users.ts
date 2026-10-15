@@ -258,6 +258,22 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     return { ok: true };
   });
 
+  // Recovery for someone held out by their trusted IP list (for example after moving house).
+  app.post('/api/admin/users/:id/reset-trusted-ips', async (req) => {
+    const admin = requireAdmin(req).user;
+    const { id } = parse(idParam, req.params);
+    const target = findUser(id);
+    if (!target) throw notFound('User not found');
+    db.prepare('UPDATE users SET trusted_ip_enabled = 0, updated_at = ? WHERE id = ?').run(Date.now(), id);
+    db.prepare('UPDATE sessions SET ip_challenge = 0 WHERE user_id = ?').run(id);
+    notify(ctx, req.log, target, 'an administrator turned off your trusted IP list');
+    audit.record({
+      actorId: admin.id, actorUsername: admin.username, action: 'admin.user_reset_trusted_ips', targetType: 'user', targetId: id,
+      ip: clientIp(req), details: { username: target.username },
+    });
+    return { ok: true };
+  });
+
   app.post('/api/admin/users/:id/unlock', async (req) => {
     const admin = requireAdmin(req).user;
     const { id } = parse(idParam, req.params);

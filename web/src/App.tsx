@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { get, post, setLockedHandler, setUnauthenticatedHandler, type ConnectChoice, type Server, type User } from './api';
+import { get, post, setIpChallengeHandler, setLockedHandler, setUnauthenticatedHandler, type ConnectChoice, type Server, type User } from './api';
 import { LockScreen, useIdleLock } from './lock';
 import { AccountPage } from './pages/Account';
 import { AdminUsersPage, AuditPage } from './pages/Admin';
 import { SettingsPage } from './pages/Settings';
-import { ForcePasswordChangePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
+import { ForcePasswordChangePage, IpChallengePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
 import { KeysPage } from './pages/Keys';
 import { ServersPage } from './pages/Servers';
 import { TerminalSession, type TerminalState } from './terminal/TerminalSession';
@@ -16,6 +16,7 @@ type Boot =
   | { kind: 'login'; mfaPending: boolean }
   /** Signed in but locked when the page loaded, so there is no app state to keep behind the lock. */
   | { kind: 'locked'; username: string; displayName: string }
+  | { kind: 'ipchallenge' }
   | { kind: 'app'; user: User };
 
 interface OpenTerminal {
@@ -51,8 +52,9 @@ export function App() {
     const setup = await get<{ needed: boolean }>('/api/setup');
     if (setup.needed) return setBoot({ kind: 'setup' });
     try {
-      const me = await get<{ user?: User; mfaRequired?: boolean; locked?: boolean; username?: string; displayName?: string }>('/api/auth/me');
-      if (me.locked) setBoot({ kind: 'locked', username: me.username!, displayName: me.displayName! });
+      const me = await get<{ user?: User; mfaRequired?: boolean; locked?: boolean; ipChallenge?: boolean; username?: string; displayName?: string }>('/api/auth/me');
+      if (me.user && me.ipChallenge) setBoot({ kind: 'ipchallenge' });
+      else if (me.locked) setBoot({ kind: 'locked', username: me.username!, displayName: me.displayName! });
       else if (me.user) setBoot({ kind: 'app', user: me.user });
       else setBoot({ kind: 'login', mfaPending: !!me.mfaRequired });
     } catch {
@@ -62,6 +64,10 @@ export function App() {
 
   useEffect(() => {
     void refresh();
+    setIpChallengeHandler(() => {
+      setTerminals([]);
+      setBoot({ kind: 'ipchallenge' });
+    });
     setUnauthenticatedHandler(() => {
       setTerminals([]);
       setLocked(false);
@@ -118,6 +124,8 @@ export function App() {
     );
   }
   if (boot.kind === 'login') return <LoginPage mfaPending={boot.mfaPending} onLoggedIn={(user) => setBoot({ kind: 'app', user })} />;
+
+  if (boot.kind === 'ipchallenge') return <IpChallengePage onDone={() => void refresh()} onLogout={logout} />;
 
   const user = boot.user;
   if (locked && user.mustChangePassword) {

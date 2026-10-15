@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { notify } from '../accountTokens.js';
@@ -13,6 +13,7 @@ import {
   sessionToken,
   setSessionCookie,
 } from '../http.js';
+import { checkChallengeCode, checkSessionIp, sendChallengeCode } from '../ipTrust.js';
 import { checkPasswordPolicy, hashPassword, needsRehash, verifyDummy, verifyPassword } from '../passwords.js';
 import {
   generateRecoveryCodes,
@@ -125,9 +126,12 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
       return { mfaRequired: true };
     }
 
-    setSessionCookie(ctx, reply, completeLogin(user, ip, ua));
+    const token = completeLogin(user, ip, ua);
+    setSessionCookie(ctx, reply, token);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.login', ip });
-    return { mfaRequired: false, user: publicUser(getUser(user.id)) };
+    const created = sessions.resolve(token)!;
+    const { challenged } = checkSessionIp(ctx, req.log, created.user, created.session, ip);
+    return { mfaRequired: false, ipChallenge: challenged, user: publicUser(getUser(user.id)) };
   });
 
   app.post('/api/auth/mfa', loginRateLimit, async (req, reply) => {
@@ -149,7 +153,12 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
 
     // New token after the second factor: the pre-MFA cookie value is never promoted.
     sessions.destroyByHash(auth.session.id_hash);
-    setSessionCookie(ctx, reply, completeLogin(user, ip, req.headers['user-agent'] ?? null));
+    const token = completeLogin(user, ip, req.headers['user-agent'] ?? null);
+    setSessionCookie(ctx, reply, token);
+    // A fresh second-factor code is the proof the trusted-IP challenge asks for, so the sign-in is
+    // let through; the user is still told it came from an unlisted address.
+    const created = sessions.resolve(token)!;
+    checkSessionIp(ctx, req.log, created.user, created.session, ip, { verifiedByMfa: true });
     audit.record({
       actorId: user.id,
       actorUsername: user.username,
@@ -174,7 +183,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (auth.session.stage === 'mfa') return { mfaRequired: true };
     // A locked session learns only enough to draw the lock screen.
     if (auth.session.locked_at !== null) return { locked: true, username: auth.user.username, displayName: auth.user.display_name };
-    return { user: publicUser(auth.user) };
+    return { user: publicUser(auth.user), ipChallenge: auth.session.ip_challenge === 1 };
   });
 
   // ---- Idle lock ----
@@ -330,5 +339,67 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.recovery_codes_regenerate', ip: clientIp(req) });
     notify(ctx, req.log, user, 'new two-factor recovery codes were generated (the old ones no longer work)');
     return { recoveryCodes };
+  });
+
+  // ---- Trusted IP challenge: releases a session held because it came from an unlisted address ----
+
+  const challengeLimit = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
+  const challengeBody = z.union([
+    z.object({ code: z.string().trim().regex(/^\d{6,8}$/, 'Enter the code') }),
+    z.object({ recoveryCode: z.string().trim().min(8).max(32) }),
+  ]);
+
+  function heldSession(req: FastifyRequest) {
+    const auth = requireUser(req, { allowIpChallenge: true, allowPendingPasswordChange: true });
+    if (auth.session.ip_challenge !== 1) throw badRequest('This sign-in does not need verifying.');
+    return auth;
+  }
+
+  app.get('/api/auth/ip-challenge', async (req) => {
+    const { user, session } = heldSession(req);
+    return {
+      ip: session.flagged_ip,
+      methods: [...(user.totp_enabled ? ['totp'] : []), ...(user.email ? ['email'] : [])],
+    };
+  });
+
+  app.post('/api/auth/ip-challenge/send', challengeLimit, async (req) => {
+    const { user, session } = heldSession(req);
+    if (!user.email) throw badRequest('No email address on this account. Use your authenticator app, or ask an administrator.');
+    const sent = sendChallengeCode(ctx, req.log, user, session);
+    return { sent };
+  });
+
+  app.post('/api/auth/ip-challenge/verify', challengeLimit, async (req) => {
+    const { user, session } = heldSession(req);
+    const body = parse(challengeBody, req.body);
+    const ip = clientIp(req);
+    let ok = false;
+    let method = 'email';
+    if ('recoveryCode' in body) {
+      method = 'recovery_code';
+      ok = user.totp_enabled === 1 && useRecoveryCode(user, body.recoveryCode);
+    } else if (user.totp_enabled && checkTotp(user, body.code)) {
+      method = 'totp';
+      ok = true;
+    } else if (body.code.length === 8) {
+      const res = checkChallengeCode(ctx, session, body.code);
+      ok = res === 'ok';
+      if (res === 'exhausted') {
+        audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.ip_challenge', outcome: 'failure', ip, details: { reason: 'too_many_attempts' } });
+        sessions.destroyByHash(session.id_hash);
+        throw new HttpError(401, 'Too many wrong codes. Sign in again.', 'unauthenticated');
+      }
+    }
+    if (!ok) {
+      registerFailure(user);
+      audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.ip_challenge', outcome: 'failure', ip });
+      const fresh = getUser(user.id);
+      if (fresh.locked_until && fresh.locked_until > Date.now()) sessions.destroyByHash(session.id_hash);
+      throw new HttpError(400, 'That code is not valid.', 'invalid_code');
+    }
+    db.prepare('UPDATE sessions SET ip_challenge = 0 WHERE id_hash = ?').run(session.id_hash);
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.ip_challenge', ip, details: { method } });
+    return { user: publicUser(getUser(user.id)), ip: session.flagged_ip };
   });
 }

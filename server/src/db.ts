@@ -147,6 +147,35 @@ const MIGRATIONS: string[] = [
   ALTER TABLE sessions ADD COLUMN locked_at INTEGER;
   ALTER TABLE sessions ADD COLUMN unlock_failures INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- Per-user trusted IP list. Off unless the user turns it on.
+  -- 'notify': a session from an unlisted address is allowed but flagged (audit + email).
+  -- 'challenge': it is held until the user proves it is them (2FA code or an emailed code).
+  ALTER TABLE users ADD COLUMN trusted_ip_enabled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN trusted_ip_policy TEXT NOT NULL DEFAULT 'notify' CHECK (trusted_ip_policy IN ('notify', 'challenge'));
+
+  CREATE TABLE trusted_ips (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    cidr        TEXT NOT NULL,
+    label       TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    UNIQUE (user_id, cidr)
+  );
+
+  -- ip_challenge = 1: the session came from an untrusted address under the 'challenge' policy.
+  -- flagged_ip: the last untrusted address already reported for this session (so we flag once).
+  ALTER TABLE sessions ADD COLUMN ip_challenge INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE sessions ADD COLUMN flagged_ip TEXT;
+
+  -- Emailed one-time code for a held session. Only its SHA-256 is stored.
+  CREATE TABLE ip_challenges (
+    session_hash  TEXT PRIMARY KEY REFERENCES sessions(id_hash) ON DELETE CASCADE,
+    code_hash     TEXT NOT NULL,
+    expires_at    INTEGER NOT NULL,
+    attempts      INTEGER NOT NULL DEFAULT 0
+  );
+  `,
 ];
 
 export function openDatabase(file: string): DB {
