@@ -27,6 +27,8 @@ const serverFields = {
   keyId: z.uuid().nullable().optional(),
   password: z.string().min(1).max(1024).optional(),
   notes: z.string().max(2000).default(''),
+  jumpMode: z.enum(['none', 'auto', 'fixed']).default('none'),
+  jumpHostId: z.uuid().nullable().optional(),
 };
 const createBody = z.object(serverFields);
 const updateBody = z
@@ -39,6 +41,8 @@ const updateBody = z
     keyId: z.uuid().nullable().optional(),
     password: z.string().min(1).max(1024).optional(),
     notes: z.string().max(2000).optional(),
+    jumpMode: z.enum(['none', 'auto', 'fixed']).optional(),
+    jumpHostId: z.uuid().nullable().optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 const shareBody = z.object({
@@ -59,12 +63,15 @@ const connectBody = z
       ])
       .default({ type: 'saved' }),
     username: sshUser.optional(),
+    /** Id of a detached terminal to re-attach to. The credential choice is ignored for it. */
+    resume: z.string().min(20).max(100).optional(),
   })
   .default({ credential: { type: 'saved' } });
 const shareParams = z.object({ id: z.uuid(), userId: z.uuid() });
 
 /** Fields a "manage" grantee may change. Connection details and credentials stay with the owner. */
 const MANAGER_EDITABLE = new Set(['name', 'notes']);
+const JUMP_FIELDS = ['jumpMode', 'jumpHostId'] as const;
 
 export const serverPasswordContext = (serverId: string) => `server:${serverId}:password`;
 
@@ -118,6 +125,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       key: key ? { id: key.id, name: key.name, fingerprint: key.fingerprint } : null,
       hasStoredPassword: server.password_enc !== null,
       hostKeyFingerprint: server.host_key_fingerprint,
+      jump: jumpView(server),
       notes: server.notes,
       access,
       credentials,
@@ -127,6 +135,45 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       createdAt: server.created_at,
       updatedAt: server.updated_at,
     };
+  }
+
+  function jumpView(server: ServerRow) {
+    const host = server.jump_host_id
+      ? (db.prepare('SELECT id, name, enabled FROM jump_hosts WHERE id = ?').get(server.jump_host_id) as { id: string; name: string; enabled: number } | undefined)
+      : undefined;
+    return {
+      mode: server.jump_mode,
+      host: host ? { id: host.id, name: host.name, enabled: host.enabled === 1 } : null,
+    };
+  }
+
+  /**
+   * Who may route a server through a jump host. Anyone who owns the server may send it through
+   * 'auto' or turn jumping off, but naming a specific jump host is an admin decision, and once an
+   * admin has fixed one a non-admin owner cannot move the server off it.
+   */
+  function resolveJump(
+    user: UserRow,
+    current: ServerRow | null,
+    want: { jumpMode?: ServerRow['jump_mode'] | undefined; jumpHostId?: string | null | undefined },
+  ): { mode: ServerRow['jump_mode']; hostId: string | null } {
+    const mode = want.jumpMode ?? current?.jump_mode ?? 'none';
+    let hostId = mode === 'fixed' ? (want.jumpHostId !== undefined ? want.jumpHostId : (current?.jump_host_id ?? null)) : null;
+    const changing = current ? mode !== current.jump_mode || hostId !== current.jump_host_id : mode !== 'none';
+    if (changing) {
+      if (user.role !== 'admin' && (mode === 'fixed' || current?.jump_mode === 'fixed')) {
+        throw forbidden('Only an admin can choose or change a specific jump host.');
+      }
+      if (mode === 'fixed') {
+        if (!hostId) throw badRequest('Choose a jump host.');
+        if (!db.prepare('SELECT 1 FROM jump_hosts WHERE id = ?').get(hostId)) throw badRequest('That jump host does not exist.');
+      }
+      if (mode === 'auto' && !db.prepare('SELECT 1 FROM jump_hosts WHERE enabled = 1').get()) {
+        throw badRequest('No jump host has been set up yet. Ask an admin to add one.');
+      }
+    }
+    if (mode !== 'fixed') hostId = null;
+    return { mode, hostId };
   }
 
   function load(userId: string, serverId: string, allowed: ServerAccess[]) {
@@ -171,20 +218,21 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     const body = parse(createBody, req.body);
     assertOwnKey(user.id, body.keyId);
     validateCredentials(body.authMethod, body.keyId ?? null, !!body.password);
+    const jump = resolveJump(user, null, body);
     const id = randomUUID();
     const now = Date.now();
     db.prepare(
-      `INSERT INTO servers (id, owner_id, name, host, port, username, auth_method, key_id, password_enc, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO servers (id, owner_id, name, host, port, username, auth_method, key_id, password_enc, notes, jump_mode, jump_host_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id, user.id, body.name, body.host, body.port, body.username, body.authMethod,
       body.authMethod === 'key' ? body.keyId : null,
       body.authMethod === 'password' && body.password ? box.seal(body.password, serverPasswordContext(id)) : null,
-      body.notes, now, now,
+      body.notes, jump.mode, jump.hostId, now, now,
     );
     audit.record({
       actorId: user.id, actorUsername: user.username, action: 'server.create', targetType: 'server', targetId: id,
-      ip: clientIp(req), details: { name: body.name, host: body.host, port: body.port, username: body.username, authMethod: body.authMethod },
+      ip: clientIp(req), details: { name: body.name, host: body.host, port: body.port, username: body.username, authMethod: body.authMethod, jumpMode: jump.mode, jumpHostId: jump.hostId },
     });
     return { server: view(getServerAccess(ctx, user.id, id)!) };
   });
@@ -199,6 +247,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       if (disallowed.length) throw forbidden('Only the owner can change connection details or credentials.');
     }
     assertOwnKey(server.owner_id, body.keyId);
+    const jump = JUMP_FIELDS.some((f) => body[f] !== undefined) ? resolveJump(user, server, body) : { mode: server.jump_mode, hostId: server.jump_host_id };
 
     const authMethod = body.authMethod ?? server.auth_method;
     const keyId = authMethod === 'key' ? (body.keyId !== undefined ? body.keyId : server.key_id) : null;
@@ -210,14 +259,17 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     const port = body.port ?? server.port;
     // A different endpoint is a different machine: its host key must be verified afresh.
     const endpointChanged = host !== server.host || port !== server.port;
+    const jumpChanged = jump.mode !== server.jump_mode || jump.hostId !== server.jump_host_id;
 
     db.prepare(
       `UPDATE servers SET name = ?, host = ?, port = ?, username = ?, auth_method = ?, key_id = ?, password_enc = ?,
-         host_key_fingerprint = ?, notes = ?, updated_at = ? WHERE id = ?`,
+         host_key_fingerprint = ?, notes = ?, jump_mode = ?, jump_host_id = ?, updated_at = ? WHERE id = ?`,
     ).run(
       body.name ?? server.name, host, port, body.username ?? server.username, authMethod, keyId, passwordEnc,
-      endpointChanged ? null : server.host_key_fingerprint, body.notes ?? server.notes, Date.now(), id,
+      endpointChanged ? null : server.host_key_fingerprint, body.notes ?? server.notes, jump.mode, jump.hostId, Date.now(), id,
     );
+    // A new route is a new vantage point: terminals already open keep the old path only until closed.
+    if (jumpChanged) terminals.closeForServer(id, 'This server’s jump host setting was changed. Reconnect to use it.');
     const { password: _omit, ...logged } = body;
     audit.record({
       actorId: user.id, actorUsername: user.username, action: 'server.update', targetType: 'server', targetId: id,
@@ -363,6 +415,11 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     const body = parse(connectBody, req.body ?? undefined);
     const grant = load(user.id, id, ['owner', 'manage', 'use']);
     const { server, access } = grant;
+    if (body.resume) {
+      const live = terminals.resumable(user.id, body.resume);
+      if (!live || live.serverId !== server.id) throw new HttpError(404, 'That terminal is no longer running.', 'session_gone');
+      return { ticket: terminals.issueTicket({ userId: user.id, serverId: server.id, sessionIdHash: session.id_hash, access, credential: { type: 'saved' }, username: server.username, resume: body.resume }) };
+    }
     if (terminals.countForUser(user.id) >= ctx.settings.limits.maxTerminalsPerUser) {
       throw new HttpError(429, 'You have too many open terminals. Close one first.', 'too_many_terminals');
     }

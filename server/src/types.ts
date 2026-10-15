@@ -70,7 +70,25 @@ export interface ServerRow {
   key_id: string | null;
   password_enc: string | null;
   host_key_fingerprint: string | null;
+  jump_mode: 'none' | 'auto' | 'fixed';
+  jump_host_id: string | null;
   notes: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface JumpHostRow {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  public_key: string;
+  fingerprint: string;
+  private_key_enc: string;
+  host_key_fingerprint: string | null;
+  enabled: number;
+  created_by: string | null;
   created_at: number;
   updated_at: number;
 }

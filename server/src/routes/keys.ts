@@ -27,7 +27,7 @@ export interface StoredPrivateKey {
   passphrase?: string;
 }
 
-function generateKeyPair(type: 'ed25519' | 'ecdsa' | 'rsa'): Promise<{ private: string; public: string }> {
+export function generateKeyPair(type: 'ed25519' | 'ecdsa' | 'rsa'): Promise<{ private: string; public: string }> {
   // Async so a 4096-bit RSA generation does not stall every other connection.
   return new Promise((resolve, reject) => {
     const done = (err: Error | null, pair: { private: string; public: string }) => (err ? reject(err) : resolve(pair));

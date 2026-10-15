@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { del, get, patch, post, put, type AuthMethod, type ConnectChoice, type ConnectCredential, type Server, type Share, type ShareCredentials, type SshKey } from '../api';
+import { del, get, patch, post, put, type AuthMethod, type ConnectChoice, type ConnectCredential, type JumpHost, type JumpMode, type Server, type Share, type ShareCredentials, type SshKey } from '../api';
 import { Field, Form, Modal, useAsync } from '../ui';
 
-export function ServersPage({ onConnect }: { onConnect: (s: Server, choice?: ConnectChoice) => void }) {
+export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, choice?: ConnectChoice) => void; isAdmin: boolean }) {
   const { data, error, reload } = useAsync(() => get<{ servers: Server[] }>('/api/servers'), []);
   const [editing, setEditing] = useState<Server | 'new' | null>(null);
   const [sharing, setSharing] = useState<Server | null>(null);
@@ -49,6 +49,9 @@ export function ServersPage({ onConnect }: { onConnect: (s: Server, choice?: Con
                 )}
                 <span className="badge">{s.credentials === 'own' ? 'Your own credentials' : authLabel(s.authMethod)}</span>
                 {!s.hostKeyFingerprint && <span className="badge warn">Host key not verified</span>}
+                {s.jump.mode !== 'none' && (
+                  <span className="badge">{s.jump.mode === 'auto' ? 'Via closest jump host' : `Via ${s.jump.host?.name ?? 'missing jump host'}`}</span>
+                )}
               </div>
             </div>
             <div className="actions">
@@ -67,6 +70,7 @@ export function ServersPage({ onConnect }: { onConnect: (s: Server, choice?: Con
       {editing && (
         <ServerForm
           server={editing === 'new' ? null : editing}
+          isAdmin={isAdmin}
           onClose={() => setEditing(null)}
           onSaved={() => (setEditing(null), reload())}
         />
@@ -87,7 +91,7 @@ function authLabel(m: AuthMethod) {
   return m === 'key' ? 'SSH key' : m === 'password' ? 'Stored password' : 'Password on connect';
 }
 
-function ServerForm({ server, onClose, onSaved }: { server: Server | null; onClose: () => void; onSaved: () => void }) {
+function ServerForm({ server, isAdmin, onClose, onSaved }: { server: Server | null; isAdmin: boolean; onClose: () => void; onSaved: () => void }) {
   const isOwner = !server || server.access === 'owner';
   const keys = useAsync(() => (isOwner ? get<{ keys: SshKey[] }>('/api/keys') : Promise.resolve({ keys: [] })), []);
   const [name, setName] = useState(server?.name ?? '');
@@ -98,6 +102,11 @@ function ServerForm({ server, onClose, onSaved }: { server: Server | null; onClo
   const [keyId, setKeyId] = useState(server?.key?.id ?? '');
   const [password, setPassword] = useState('');
   const [notes, setNotes] = useState(server?.notes ?? '');
+  const [jumpMode, setJumpMode] = useState<JumpMode>(server?.jump.mode ?? 'none');
+  const [jumpHostId, setJumpHostId] = useState(server?.jump.host?.id ?? '');
+  const jumpHosts = useAsync(() => (isOwner && isAdmin ? get<{ jumpHosts: JumpHost[] }>('/api/admin/jump-hosts') : Promise.resolve({ jumpHosts: [] })), []);
+  // A non-admin owner cannot move a server off a jump host an admin picked.
+  const jumpLocked = !isAdmin && server?.jump.mode === 'fixed';
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const save = async () => {
@@ -106,6 +115,7 @@ function ServerForm({ server, onClose, onSaved }: { server: Server | null; onClo
       return onSaved();
     }
     const body: Record<string, unknown> = { name, host, port: Number(port), username, authMethod, notes };
+    if (!jumpLocked) Object.assign(body, { jumpMode, jumpHostId: jumpMode === 'fixed' ? jumpHostId : null });
     if (authMethod === 'key') body.keyId = keyId || null;
     if (authMethod === 'password' && password) body.password = password;
     if (server) await patch(`/api/servers/${server.id}`, body);
@@ -154,6 +164,33 @@ function ServerForm({ server, onClose, onSaved }: { server: Server | null; onClo
             {authMethod === 'password' && (
               <Field label="Password" hint={server?.hasStoredPassword ? 'Leave blank to keep the stored password.' : undefined}>
                 <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" required={!server?.hasStoredPassword} />
+              </Field>
+            )}
+            <Field
+              label="Route"
+              hint={
+                jumpLocked
+                  ? `An admin sends this server through ${server?.jump.host?.name ?? 'a jump host'}. Only an admin can change that.`
+                  : 'Through a jump host, Any-SSH reaches this server over a relay, and your login to it stays end to end: the jump host never sees your credentials.'
+              }
+            >
+              <select value={jumpMode} onChange={(e) => setJumpMode(e.target.value as JumpMode)} disabled={jumpLocked}>
+                <option value="none">Direct from Any-SSH</option>
+                <option value="auto">Through the closest jump host</option>
+                {(isAdmin || jumpMode === 'fixed') && <option value="fixed">Through a specific jump host (admin)</option>}
+              </select>
+            </Field>
+            {jumpMode === 'fixed' && !jumpLocked && (
+              <Field label="Jump host">
+                <select value={jumpHostId} onChange={(e) => setJumpHostId(e.target.value)} required>
+                  <option value="">Choose a jump host…</option>
+                  {jumpHosts.data?.jumpHosts.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.name}
+                      {j.enabled ? '' : ' (disabled)'}
+                    </option>
+                  ))}
+                </select>
               </Field>
             )}
           </>

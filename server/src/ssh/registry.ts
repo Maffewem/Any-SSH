@@ -22,12 +22,21 @@ export interface TerminalTicket {
   credential: ConnectCredential;
   /** SSH login name for this connection: the server's, unless the user brought their own credentials. */
   username: string;
+  /** Id of a live (detached) terminal of this user's to re-attach to instead of opening a new one. */
+  resume?: string;
 }
 
-interface LiveTerminal {
+export interface LiveTerminal {
+  /** Random, unguessable; the browser holds it in memory to re-attach after a dropped connection. */
+  id: string;
   userId: string;
   serverId: string;
+  /** The web session this terminal answers to. Follows the user's most recent re-attach. */
   sessionIdHash: string;
+  /** The jump host this terminal runs through, if any. */
+  jumpHostId: string | null;
+  /** True while a browser is not attached and the SSH session is being kept for a re-attach. */
+  detached: boolean;
   close(reason: string): void;
   /** Pauses (locked) or resumes the terminal while its web session is locked. */
   setLocked(locked: boolean): void;
@@ -69,6 +78,12 @@ export class TerminalRegistry {
     return () => this.live.delete(t);
   }
 
+  /** A terminal this user may re-attach to: still open and kept alive after its browser dropped. */
+  resumable(userId: string, id: string): LiveTerminal | null {
+    for (const t of this.live) if (t.id === id && t.userId === userId && t.detached) return t;
+    return null;
+  }
+
   countForUser(userId: string): number {
     let n = 0;
     for (const t of this.live) if (t.userId === userId) n++;
@@ -81,6 +96,10 @@ export class TerminalRegistry {
 
   closeForUser(userId: string, reason: string): void {
     this.closeWhere((t) => t.userId === userId, reason);
+  }
+
+  closeForJumpHost(jumpHostId: string, reason: string): void {
+    this.closeWhere((t) => t.jumpHostId === jumpHostId, reason);
   }
 
   closeForServer(serverId: string, reason: string): void {

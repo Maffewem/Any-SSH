@@ -24,12 +24,36 @@ export interface SettingsView {
     from: string;
   };
   sessions: { source: 'environment' | 'web'; lockMinutes: number; idleMinutes: number; maxHours: number };
-  limits: { source: 'environment' | 'web'; maxTerminalsPerUser: number };
+  limits: { source: 'environment' | 'web'; maxTerminalsPerUser: number; detachMinutes: number };
 }
 
 export type Access = 'owner' | 'manage' | 'use';
 /** Whose credentials a share connects with. */
 export type ShareCredentials = 'owner' | 'own';
+/** none: direct. auto: through the closest jump host. fixed: through the one an admin chose. */
+export type JumpMode = 'none' | 'auto' | 'fixed';
+
+export interface JumpHost {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  publicKey: string;
+  keyFingerprint: string;
+  hostKeyFingerprint: string | null;
+  enabled: boolean;
+  serverCount: number;
+}
+
+export interface JumpTest {
+  fingerprint: string | null;
+  hostKey: 'unpinned' | 'match' | 'mismatch' | 'unknown';
+  authenticated: boolean;
+  latencyMs: number | null;
+  error?: string;
+}
+
 export type AuthMethod = 'key' | 'password' | 'prompt';
 
 export interface Server {
@@ -42,6 +66,7 @@ export interface Server {
   key: { id: string; name: string; fingerprint: string } | null;
   hasStoredPassword: boolean;
   hostKeyFingerprint: string | null;
+  jump: { mode: JumpMode; host: { id: string; name: string; enabled: boolean } | null };
   notes: string;
   access: Access;
   credentials: ShareCredentials;

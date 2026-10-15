@@ -21,6 +21,8 @@ export interface Config {
   /** Absolute session lifetime, however active. */
   sessionMaxHours: number;
   maxTerminalsPerUser: number;
+  /** Minutes a dropped browser connection keeps its SSH session alive for re-attaching. 0 = close at once. */
+  detachMinutes: number;
   sshConnectTimeoutMs: number;
   /** Allow SSH targets on loopback / link-local / metadata addresses. Off by default (SSRF guard). */
   allowLoopbackTargets: boolean;
@@ -119,6 +121,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionIdleMinutes: int(env.ANYSSH_SESSION_IDLE_MINUTES, 120),
     sessionMaxHours: int(env.ANYSSH_SESSION_MAX_HOURS, 12),
     maxTerminalsPerUser: int(env.ANYSSH_MAX_TERMINALS_PER_USER, 8),
+    detachMinutes: int(env.ANYSSH_DETACH_MINUTES, 5, 0),
     sshConnectTimeoutMs: int(env.ANYSSH_SSH_CONNECT_TIMEOUT_MS, 15000),
     allowLoopbackTargets: bool(env.ANYSSH_ALLOW_LOOPBACK_TARGETS, false),
     webRoot: env.ANYSSH_WEB_ROOT === '' ? null : path.resolve(env.ANYSSH_WEB_ROOT ?? '../web/dist'),

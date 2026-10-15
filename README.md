@@ -19,6 +19,11 @@ Install it as an app from Safari ("Add to Home Screen") or Chrome.
 - **One-off keys:** paste a private key when connecting and it is used for that session only, never saved.
 - **Terminal:** xterm.js over a WebSocket, multiple tabs, and an extra-keys bar (Esc, Tab, Ctrl, Alt, arrows) on touch
   devices.
+- **Split panes and sessions that survive a dropped connection:** split a terminal tab right or down (up to six panes); if the
+  browser or network drops, the SSH session is kept for a few minutes (admin setting) and the browser re-attaches and replays what
+  it missed.
+- **Jump hosts:** admins define bastions; a server can go through a specific one (admin choice) or the closest available one. The
+  target login stays end to end, and host keys are checked at every hop.
 
 Security design, threat model and known gaps: [docs/SECURITY.md](docs/SECURITY.md). Deployment and scaling:
 [docs/DEPLOY.md](docs/DEPLOY.md).

@@ -16,6 +16,7 @@ import { ConfigurableMailer, type Mailer } from './mail.js';
 import { countStale } from './rotate.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerJumpHostRoutes } from './routes/jumpHosts.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerTrustedIpRoutes } from './routes/trustedIps.js';
 import { registerServerRoutes } from './routes/servers.js';
@@ -137,6 +138,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   registerTrustedIpRoutes(app, ctx);
   registerUserRoutes(app, ctx, setup);
   registerKeyRoutes(app, ctx);
+  registerJumpHostRoutes(app, ctx);
   registerServerRoutes(app, ctx);
   registerSettingsRoutes(app, ctx);
   registerTerminalRoute(app, ctx);
