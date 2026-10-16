@@ -277,7 +277,7 @@ export function TokenPage({ token, onDone }: { token: string; onDone: () => void
   );
 }
 
-export function ChangePasswordForm({ onDone, submit = 'Change password' }: { onDone: (u: User) => void; submit?: string }) {
+export function ChangePasswordForm({ onDone, submit = 'Change password' }: { onDone: (u: User, signedOutSessions?: number) => void; submit?: string }) {
   const [currentPassword, setCurrent] = useState('');
   const [newPassword, setNew] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -286,11 +286,11 @@ export function ChangePasswordForm({ onDone, submit = 'Change password' }: { onD
       submit={submit}
       onSubmit={async () => {
         if (newPassword !== confirm) throw new Error('New passwords do not match.');
-        const res = await post<{ user: User }>('/api/auth/password', { currentPassword, newPassword });
+        const res = await post<{ user: User; signedOutSessions?: number }>('/api/auth/password', { currentPassword, newPassword });
         setCurrent('');
         setNew('');
         setConfirm('');
-        onDone(res.user);
+        onDone(res.user, res.signedOutSessions);
       }}
     >
       <Field label="Current password">

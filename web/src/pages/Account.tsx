@@ -23,7 +23,7 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id'];
 
 export function AccountPage({ user, onUserChange }: { user: User; onUserChange: (u: User) => void }) {
-  const [passwordDone, setPasswordDone] = useState(false);
+  const [passwordDone, setPasswordDone] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [tab, choose] = useRememberedTab<TabId>('account-tab', TABS.map((t) => t.id), 'profile');
   return (
@@ -46,8 +46,12 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
         <>
           <div className="card settings-section">
             <h2>Password</h2>
-            {passwordDone && <p className="ok">Password changed. Your other devices were signed out.</p>}
-            <ChangePasswordForm onDone={(u) => (setPasswordDone(true), onUserChange(u))} />
+            {passwordDone !== null && (
+              <p className="ok">
+                Password changed. {passwordDone > 0 ? `${passwordDone} other ${passwordDone === 1 ? 'device was' : 'devices were'} signed out.` : 'No other devices were signed in.'}
+              </p>
+            )}
+            <ChangePasswordForm onDone={(u, n) => (setPasswordDone(n ?? 0), onUserChange(u))} />
           </div>
           <div className="card settings-section">
             <h2>Two-factor authentication</h2>

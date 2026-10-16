@@ -87,14 +87,15 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
     // Any other outstanding links die with this one; every existing session is signed out.
     db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND used_at IS NULL').run(user.id);
     ctx.bruteForce.clearUser(user.id);
-    sessions.destroyAllForUser(user.id);
+    const signedOut = sessions.destroyAllForUser(user.id);
     terminals.closeForUser(user.id, 'Your password was changed.');
 
     audit.record({
       actorId: user.id, actorUsername: user.username, ip: clientIp(req),
       action: row.purpose === 'invite' ? 'auth.invite_accept' : 'auth.password_reset',
+      details: { signedOutSessions: signedOut },
     });
-    if (row.purpose === 'reset') notify(ctx, req.log, user, 'your password was reset using an emailed link');
+    if (row.purpose === 'reset') notify(ctx, req.log, user, 'your password was reset using an emailed link and all your devices were signed out');
     // Two-factor is untouched: if it is on, the next sign-in still asks for a code.
     return { ok: true, username: user.username };
   });

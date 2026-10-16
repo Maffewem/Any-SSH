@@ -250,12 +250,12 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
       'UPDATE users SET password_hash = ?, must_change_password = 0, password_changed_at = ?, updated_at = ? WHERE id = ?',
     ).run(await hashPassword(body.newPassword), now, now, user.id);
     // Sign out everywhere else, and rotate this session's token.
-    sessions.destroyAllForUser(user.id, session.id_hash);
+    const signedOut = sessions.destroyAllForUser(user.id, session.id_hash);
     sessions.destroyByHash(session.id_hash);
     setSessionCookie(ctx, reply, sessions.create(user.id, 'full', clientIp(req), req.headers['user-agent'] ?? null));
-    audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.password_change', ip: clientIp(req) });
-    notify(ctx, req.log, user, 'your password was changed');
-    return { user: publicUser(getUser(user.id)) };
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.password_change', ip: clientIp(req), details: { signedOutSessions: signedOut } });
+    notify(ctx, req.log, user, 'your password was changed and all your other devices were signed out');
+    return { user: publicUser(getUser(user.id)), signedOutSessions: signedOut };
   });
 
   // ---- Sessions (devices) ----
