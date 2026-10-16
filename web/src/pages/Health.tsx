@@ -75,11 +75,6 @@ export function HealthPage() {
           {checking ? 'Checking…' : 'Check now'}
         </button>
       </div>
-      <p className="muted small">
-        Reachability is a plain connection test to each host’s SSH port from this server, so it shows what a terminal would see. No
-        credentials are used and nothing is sent. Servers that connect through a jump host cannot be tested from here and are shown
-        under that jump host.
-      </p>
       {error && <p className="error">{error}</p>}
       {health && s && (
         <>

@@ -330,8 +330,7 @@ export function HostKeysPage() {
         <h1>Host keys</h1>
       </div>
       <p className="muted small">
-        The server fingerprint each saved server is pinned to. Admins can see these but cannot change them: only a server’s owner can
-        accept a new key. A changed key, or two servers pinned to different keys for the same host, deserves a look.
+        The key each saved server is pinned to. Only a server’s owner can accept a new key.
       </p>
       {error && <p className="error">{error}</p>}
       <div className="table-wrap card">

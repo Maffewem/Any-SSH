@@ -20,8 +20,7 @@ export function KeysPage() {
         </div>
       </div>
       <p className="muted small">
-        Private keys are encrypted on the server. Add the public key to the server’s <code>~/.ssh/authorized_keys</code>.
-        You can export a private key to keep a copy elsewhere; it asks for your password first.
+        Add the public key to the server’s <code>~/.ssh/authorized_keys</code>.
       </p>
       {(error || actionError) && <p className="error">{error ?? actionError}</p>}
       {data?.keys.length === 0 && <div className="empty card">No keys yet.</div>}
