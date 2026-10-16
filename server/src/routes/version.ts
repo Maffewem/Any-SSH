@@ -46,7 +46,7 @@ export function registerVersionRoutes(app: FastifyInstance, ctx: AppContext): vo
   // Manual "check now". Refused when the operator turned checks off, so the server never calls out unasked.
   app.post('/api/admin/version/check', { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } }, async (req) => {
     requireAdmin(req);
-    if (config.updateCheck) await updates.check();
+    if (config.updateCheck) await updates.check({ force: true });
     return view();
   });
 
@@ -57,10 +57,10 @@ export function registerVersionRoutes(app: FastifyInstance, ctx: AppContext): vo
     if (!ctx.updateRequests.agentActive()) {
       throw badRequest('The update agent is not running on the server. Run “sudo any-ssh web-update on” on the server once, then try again.');
     }
-    // Only when a newer version is known. Re-checks first (reusing a result under 30 seconds old). With update checks
+    // Only when a newer version is known. Re-checks the registry first. With update checks
     // turned off the server can't tell, so the host agent's own check ("update-if-newer") is the guard.
     if (config.updateCheck) {
-      const status = await updates.check();
+      const status = await updates.check({ force: true });
       if (status.updateAvailable === false) throw badRequest('This server is already up to date.');
       if (status.updateAvailable !== true) throw badRequest('Couldn’t confirm that a newer version is available. Use “Check for updates” first.');
     }

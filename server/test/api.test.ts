@@ -383,4 +383,52 @@ describe('version and update check', () => {
       await b.app.close();
     }
   });
+  it('re-queries the registry on every manual check, even within 30 seconds', async () => {
+    let published = { commit: 'aaa', created: '2026-01-01T00:00:00Z' };
+    let lookups = 0;
+    const registry = async (url: any) => {
+      const u = String(url);
+      const json = (o: unknown) => new Response(JSON.stringify(o), { status: 200 });
+      if (u.endsWith('/manifests/latest')) {
+        lookups++;
+        return json({ config: { digest: 'sha256:c' } });
+      }
+      if (u.endsWith('/blobs/sha256:c'))
+        return json({ config: { Labels: { 'org.opencontainers.image.revision': published.commit, 'org.opencontainers.image.created': published.created } } });
+      return new Response('no', { status: 404 });
+    };
+    const mine = { version: 'dev', commit: 'aaa', builtAt: '2026-01-01T00:00:00Z' };
+    const b = await makeApp({ updateCheck: true }, { build: mine, fetch: registry as typeof fetch });
+    try {
+      const admin = await setupAdmin(b);
+      expect((await admin.post('/api/admin/version/check')).body.updateAvailable).toBe(false);
+      published = { commit: 'bbb', created: '2026-02-01T00:00:00Z' };
+      const v = await admin.post('/api/admin/version/check');
+      expect(lookups).toBe(2);
+      expect(v.body.updateAvailable).toBe(true);
+      expect(v.body.latest.commit).toBe('bbb');
+    } finally {
+      await b.app.close();
+    }
+  });
+
+  it('does not reuse a failed check', async () => {
+    let fail = true;
+    const registry = async (url: any) => {
+      const u = String(url);
+      if (fail) return new Response('down', { status: 503 });
+      const json = (o: unknown) => new Response(JSON.stringify(o), { status: 200 });
+      if (u.endsWith('/manifests/latest')) return json({ config: { digest: 'sha256:c' } });
+      return json({ config: { Labels: { 'org.opencontainers.image.revision': 'bbb', 'org.opencontainers.image.created': '2026-02-01T00:00:00Z' } } });
+    };
+    const mine = { version: 'dev', commit: 'aaa', builtAt: '2026-01-01T00:00:00Z' };
+    const b = await makeApp({ updateCheck: true }, { build: mine, fetch: registry as typeof fetch });
+    try {
+      await b.ctx.updates.check();
+      fail = false;
+      expect((await b.ctx.updates.check()).updateAvailable).toBe(true);
+    } finally {
+      await b.app.close();
+    }
+  });
 });
