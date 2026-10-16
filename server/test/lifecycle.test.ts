@@ -41,6 +41,29 @@ describe('sign out everywhere', () => {
   });
 });
 
+describe('password changes sign out other devices', () => {
+  it('keeps the current session on a self-service change and ends the others', async () => {
+    const admin = await setupAdmin(built);
+    const u = await createUser(built, admin, 'erin');
+    const other = new Client(built);
+    await other.post('/api/auth/login', { username: 'erin', password: u.password });
+    const res = await u.client.post('/api/auth/password', { currentPassword: u.password, newPassword: 'harbor-violet-engine-42' });
+    expect(res.status).toBe(200);
+    expect(res.body.signedOutSessions).toBeGreaterThanOrEqual(1);
+    expect((await other.get('/api/auth/me')).status).toBe(401);
+    expect((await u.client.get('/api/auth/me')).status).toBe(200);
+    const log = (await admin.get('/api/admin/audit?limit=50')).body;
+    expect(JSON.stringify(log)).toContain('signedOutSessions');
+  });
+
+  it('signs the user out everywhere when an administrator resets the password', async () => {
+    const admin = await setupAdmin(built);
+    const u = await createUser(built, admin, 'frank');
+    expect((await admin.post(`/api/admin/users/${u.id}/reset-password`)).status).toBe(200);
+    expect((await u.client.get('/api/auth/me')).status).toBe(401);
+  });
+});
+
 describe('deleting an account', () => {
   it('needs the password', async () => {
     const { alice } = await ownerWithSharedServer();

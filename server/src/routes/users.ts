@@ -241,12 +241,12 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
       `UPDATE users SET password_hash = ?, must_change_password = 1, failed_logins = 0, locked_until = NULL,
          password_changed_at = ?, updated_at = ? WHERE id = ?`,
     ).run(await hashPassword(temporaryPassword), now, now, id);
-    sessions.destroyAllForUser(id);
+    const signedOut = sessions.destroyAllForUser(id);
     terminals.closeForUser(id, 'Your password was reset by an administrator.');
-    notify(ctx, req.log, target, 'an administrator reset your password');
+    notify(ctx, req.log, target, 'an administrator reset your password and all your devices were signed out');
     audit.record({
       actorId: admin.id, actorUsername: admin.username, action: 'admin.user_reset_password', targetType: 'user', targetId: id,
-      ip: clientIp(req), details: { username: target.username },
+      ip: clientIp(req), details: { username: target.username, signedOutSessions: signedOut },
     });
     return { temporaryPassword };
   });
