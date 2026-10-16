@@ -110,8 +110,8 @@ export const emails = {
       subject: 'Any-SSH sign-in verification code',
       text:
         `Hi ${p.displayName},\n\nA sign-in to your Any-SSH account came from ${p.ip}, which is not on your trusted IP list.\n\n` +
-        `To let it in, enter this code (it works once and expires in ${p.minutes} minutes):\n\n${p.code}\n\n` +
-        'If this was not you, do not share the code. Change your password.' +
+        `To approve this sign-in, enter this code (it works once and expires in ${p.minutes} minutes):\n\n${p.code}\n\n` +
+        'If this was not you, do not share this code and change your password immediately.' +
         footer,
     };
   },

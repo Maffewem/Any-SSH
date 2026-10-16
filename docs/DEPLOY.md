@@ -51,10 +51,10 @@ The installer adds an `any-ssh` command:
 | `any-ssh update-log` | Shows the update history: every manual or automatic update, with result (updated, failed, rolled back), versions and who started it. Also kept in the app (Settings → Updates, and the audit log) and in `/opt/any-ssh/update.log`. |
 | `sudo any-ssh auto-update on` | Installs updates by itself, inside the maintenance window set in Settings (once a day at any time if none is set), only if a newer image was published. Users are warned first. `off` / `status` also work. Off by default. Re-run it once after upgrading from an older version so the new update agent timer replaces the old daily one. |
 | `sudo any-ssh web-update on` | Lets admins press **Update now** in Settings. Starts the update agent (see below). `off` / `status` also work. Off by default. |
-| `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). Encrypted once a recovery key is set (see Backups). `--push` also stores one at the off-server destination. |
+| `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). Encrypted as chosen in Settings → Backups (see Backups). `--push` also stores one at the off-server destination. |
 | `any-ssh backup-key` | Makes a recovery key pair for backup encryption. |
-| `any-ssh verify-backup <file> <secret-key-file>` | Decrypts a backup and checks it is complete and matches this server's master key. Changes nothing. |
-| `sudo any-ssh restore <file> <secret-key-file>` | Verifies a backup, then replaces the database with it (the old one is kept beside it). |
+| `any-ssh verify-backup <file> [secret-key-file]` | Decrypts a backup and checks it is complete and matches this server's master key. Changes nothing. The key file is only for recovery-key backups. |
+| `sudo any-ssh restore <file> [secret-key-file]` | Verifies a backup, then replaces the database with it (the old one is kept beside it). |
 | `sudo any-ssh config` | Edits the settings, e.g. to add SMTP later, and applies them. |
 | `sudo any-ssh doctor` | Checks the domain's public DNS, this server's public IP and the HTTPS certificate, and says what to fix. |
 | `any-ssh status`, `any-ssh logs`, `any-ssh version` | Health, logs and the running version. |
@@ -139,10 +139,17 @@ server, so set up encrypted off-server backups (below).
 
 In the app: **Settings → Backups** (admins only).
 
-1. **Make a recovery key.** Press *Generate a key pair*, or run `any-ssh backup-key` on a trusted machine so the secret half
-   never touches this server. Save the **secret key** in a password manager, **apart from the master key** (you need both to
-   restore, and anyone holding both can read everything). The server keeps only the public key, so a stolen server or
-   stolen bucket cannot decrypt backups.
+1. **Choose how backups are encrypted.**
+   - *Recovery key* (default, most secure): press *Generate a key pair*, or run `any-ssh backup-key` on a trusted machine so
+     the secret half never touches this server. Save the **secret key** in a password manager, **apart from the master key**
+     (you need both to restore, and anyone holding both can read everything). The server keeps only the public key, so a
+     stolen server or stolen bucket cannot decrypt backups.
+   - *System-managed*: encrypted with a key derived from the master key, so the master key alone restores them and there is
+     nothing else to keep. The storage still sees only ciphertext, but someone with both this server (or its master key) and
+     a backup can read it.
+   - *None*: the plain database file. Anyone who can read the storage sees accounts, password hashes, server addresses and
+     the audit log (SSH keys and passwords stay sealed with the master key). You have to confirm it, and the page asks again
+     if the destination is S3 or SFTP. Use it only for storage you control completely.
 2. **Choose a destination.**
    - *S3-compatible storage*: AWS S3, Backblaze B2, Cloudflare R2, Wasabi, MinIO. Give the endpoint (empty for AWS), region,
      bucket, folder and an access key. Use a key that can only write to that bucket; turn on bucket versioning or object lock
@@ -150,16 +157,16 @@ In the app: **Settings → Backups** (admins only).
    - *SFTP*: host, port, username, folder, a password or private key, and the server's **host key fingerprint**
      (`ssh-keyscan host | ssh-keygen -lf -`). No connection is made until it is entered; *Test destination* shows what the
      server presents.
-   - *This server only*: keeps encrypted copies in the data volume. Better than nothing, not a disaster backup.
+   - *This server only*: keeps copies in the data volume. Better than nothing, not a disaster backup.
 3. **Schedule and retention.** Hourly, daily (at a UTC hour) or weekly, and how many backups to keep. After each successful
    backup, older ones beyond that number are deleted from the destination. A slot missed while the server was off runs when it
    is back, and a failure is retried a few times at 30 minute intervals.
 4. Press **Test destination**, then **Back up now**.
 
-Changing the key or destination asks for your password again, and saved credentials are dropped if you point at a different
+Changing the encryption, key or destination asks for your password again, and saved credentials are dropped if you point at a different
 bucket or server without entering new ones.
 
-Each backup is a file `any-ssh-<UTC time>.anybak`. Before it is encrypted, the snapshot is checked (SQLite integrity, schema,
+Each backup is a file `any-ssh-<UTC time>.anybak` (or `.db` when unencrypted). Before it is encrypted, the snapshot is checked (SQLite integrity, schema,
 the audit log's hash chain, and that the master key opens every stored secret), so a damaged database is reported rather
 than quietly backed up. After upload the destination's reported size must match.
 
@@ -171,14 +178,17 @@ For a scripted or one-off push: `sudo any-ssh backup --push`, or `docker compose
 
 ### Restoring
 
-You need three things: the `.anybak` file, the **recovery secret key**, and the **master key** this server was using when the
-backup was made (the database holds your SSH keys and passwords sealed under it).
+You need the backup file and the **master key** this server was using when the backup was made (the database holds your
+SSH keys and passwords sealed under it). For a recovery-key backup you also need the **recovery secret key**; a
+system-managed or unencrypted backup needs nothing else.
 
 ```bash
 # 1. Check a backup without changing anything (do this now, then now and then):
 any-ssh verify-backup /path/any-ssh-20261015T031700Z.anybak /path/recovery-secret.txt
 # 2. Restore it on the server (stops Any-SSH, replaces the database, starts it again):
 sudo any-ssh restore /path/any-ssh-20261015T031700Z.anybak /path/recovery-secret.txt
+# System-managed or unencrypted backups: leave out the secret key file.
+sudo any-ssh restore /path/any-ssh-20261015T031700Z.anybak
 ```
 
 `verify-backup` and `restore` decrypt, authenticate every byte, and run the same checks as above against this server's master
@@ -190,11 +200,11 @@ Restoring is deliberately not offered in the web UI: it replaces everything, inc
 click the button, and needs the secret key, which should never be typed into a server that may be compromised.
 
 Without the installer: `docker compose exec app node dist/cli/backup.js file` writes a backup into `/data/backups`
-(encrypted if a key is set), and `docker compose run --rm --no-deps -T -e ANYSSH_BACKUP_KEY app node dist/cli/backup.js restore - --verify-only < backup.anybak`
+(protected as Settings → Backups says), and `docker compose run --rm --no-deps -T -e ANYSSH_BACKUP_KEY app node dist/cli/backup.js restore - --verify-only < backup.anybak`
 checks one.
 
-Backups made before a key was set are plain `.db` files. Restore them by stopping the stack and copying the file into the
-volume as `/data/any-ssh.db`.
+Backups made before a key was set, or with encryption set to *None*, are plain `.db` files. `any-ssh restore <file>.db` checks and
+restores them like any other.
 
 For continuous backup with point-in-time restore, add [Litestream](https://litestream.io) as a sidecar that streams the
 SQLite WAL to object storage. That is the cheapest way to keep data loss to seconds without moving off SQLite.

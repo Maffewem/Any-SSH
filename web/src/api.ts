@@ -24,7 +24,13 @@ export interface SettingsView {
     from: string;
   };
   sessions: { source: 'environment' | 'web'; lockMinutes: number; idleMinutes: number; maxHours: number };
-  limits: { source: 'environment' | 'web'; maxTerminalsPerUser: number; maxTerminalsPerAdmin: number | null; detachMinutes: number };
+  limits: {
+    source: 'environment' | 'web';
+    maxTerminalsPerUser: number;
+    maxTerminalsPerAdmin: number | null;
+    detachMinutes: number;
+    defaults: { maxTerminalsPerUser: number; maxTerminalsPerAdmin: number | null; detachMinutes: number };
+  };
   security: {
     source: 'environment' | 'web';
     accountThreshold: number;
@@ -59,10 +65,14 @@ export interface BackupSettingsView {
   hourUtc: number;
   weekday: number;
   keep: number;
+  encryption: BackupEncryption;
   publicKey: string;
   keyId: string | null;
   target: BackupTargetView;
 }
+
+/** recovery: to the admin's recovery key. system: to a key derived from the master key. none: not encrypted. */
+export type BackupEncryption = 'recovery' | 'system' | 'none';
 
 export interface BackupRunView {
   id: string;
@@ -73,6 +83,7 @@ export interface BackupRunView {
   name: string | null;
   bytes: number | null;
   destination: string | null;
+  encryption: BackupEncryption;
   error: string | null;
   warning: string | null;
 }

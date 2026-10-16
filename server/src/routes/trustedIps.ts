@@ -131,7 +131,7 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
       actorId: user.id, actorUsername: user.username, action: 'user.trusted_ip_settings', ip: clientIp(req),
       details: { enabled: body.enabled, policy: body.policy, changes: changes(before, { enabled: body.enabled, policy: body.policy }) },
     });
-    notify(ctx, req.log, user, body.enabled ? `the trusted IP list was turned on (${body.policy === 'challenge' ? 'unlisted addresses are held until verified' : 'unlisted addresses are reported'})` : 'the trusted IP list was turned off');
+    notify(ctx, req.log, user, body.enabled ? `the trusted IP list was turned on (${body.policy === 'challenge' ? 'sign-ins from unlisted addresses require verification' : 'sign-ins from unlisted addresses are allowed with a notification'})` : 'the trusted IP list was turned off');
     return view(user, clientIp(req));
   });
 }

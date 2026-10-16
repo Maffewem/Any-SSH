@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { useState } from 'react';
 import { del, errorMessage, formatTime, get, patch, post, put, type User } from '../api';
-import { Field, Form, SecretOnce, useAsync } from '../ui';
+import { Field, Form, SecretOnce, SubTabs, useAsync, useRememberedTab } from '../ui';
 import { ChangePasswordForm } from './Auth';
 import { DeleteAccountForm } from './DeleteAccount';
 
@@ -14,49 +14,72 @@ interface SessionInfo {
   userAgent: string | null;
 }
 
+const TABS = [
+  { id: 'profile', label: 'Profile', blurb: 'Your name, email address and role.' },
+  { id: 'security', label: 'Security', blurb: 'Password, two-factor authentication and trusted networks.' },
+  { id: 'devices', label: 'Devices', blurb: 'Browsers and apps currently signed in to your account.' },
+  { id: 'delete', label: 'Delete account', blurb: 'Permanently remove your account and the data it owns.' },
+] as const;
+type TabId = (typeof TABS)[number]['id'];
+
 export function AccountPage({ user, onUserChange }: { user: User; onUserChange: (u: User) => void }) {
   const [passwordDone, setPasswordDone] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [tab, choose] = useRememberedTab<TabId>('account-tab', TABS.map((t) => t.id), 'profile');
   return (
-    <section className="stack">
-      <h1>Account</h1>
-      <div className="card">
-        <h2>Profile</h2>
-        <p className="muted">
-          @{user.username} · {user.role === 'admin' ? 'Administrator' : 'User'}
-        </p>
-        <ProfileForm user={user} onUserChange={onUserChange} />
+    <section>
+      <div className="page-head">
+        <h1>Account</h1>
       </div>
-      <div className="card">
-        <h2>Two-factor authentication</h2>
-        <MfaSection user={user} onChange={async () => onUserChange((await get<{ user: User }>('/api/auth/me')).user)} />
-      </div>
-      <div className="card">
-        <h2>Password</h2>
-        {passwordDone && <p className="ok">Password changed. Your other devices were signed out.</p>}
-        <ChangePasswordForm onDone={(u) => (setPasswordDone(true), onUserChange(u))} />
-      </div>
-      <div className="card">
-        <h2>Trusted IP addresses</h2>
-        <TrustedIps user={user} />
-      </div>
-      <div className="card">
-        <h2>Signed-in devices</h2>
-        <Sessions />
-      </div>
-      <div className="card">
-        <h2>Delete account</h2>
-        {deleting ? (
-          <DeleteAccountForm self username={user.username} mfaEnabled={user.mfaEnabled} onDeleted={() => window.location.reload()} />
-        ) : (
-          <>
-            <p className="muted">Permanently removes your account, SSH keys and servers. You will be asked how to handle servers shared with other people.</p>
-            <button className="danger-outline" onClick={() => setDeleting(true)}>
-              Delete my account…
-            </button>
-          </>
-        )}
-      </div>
+      <SubTabs label="Account sections" tabs={TABS} current={tab} onChoose={choose} />
+      <p className="muted small">{TABS.find((t) => t.id === tab)?.blurb}</p>
+      {tab === 'profile' && (
+        <div className="card settings-section">
+          <h2>Profile</h2>
+          <p className="muted">
+            @{user.username} · {user.role === 'admin' ? 'Administrator' : 'User'}
+          </p>
+          <ProfileForm user={user} onUserChange={onUserChange} />
+        </div>
+      )}
+      {tab === 'security' && (
+        <>
+          <div className="card settings-section">
+            <h2>Password</h2>
+            {passwordDone && <p className="ok">Password changed. Your other devices were signed out.</p>}
+            <ChangePasswordForm onDone={(u) => (setPasswordDone(true), onUserChange(u))} />
+          </div>
+          <div className="card settings-section">
+            <h2>Two-factor authentication</h2>
+            <MfaSection user={user} onChange={async () => onUserChange((await get<{ user: User }>('/api/auth/me')).user)} />
+          </div>
+          <div className="card settings-section">
+            <h2>Trusted IP addresses</h2>
+            <TrustedIps user={user} />
+          </div>
+        </>
+      )}
+      {tab === 'devices' && (
+        <div className="card settings-section">
+          <h2>Signed-in devices</h2>
+          <Sessions />
+        </div>
+      )}
+      {tab === 'delete' && (
+        <div className="card settings-section">
+          <h2>Delete account</h2>
+          {deleting ? (
+            <DeleteAccountForm self username={user.username} mfaEnabled={user.mfaEnabled} onDeleted={() => window.location.reload()} />
+          ) : (
+            <>
+              <p className="muted">Permanently removes your account, SSH keys and servers. You will be asked how to handle servers shared with other people.</p>
+              <button className="danger-outline" onClick={() => setDeleting(true)}>
+                Delete my account…
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -248,7 +271,7 @@ function TrustedIps({ user }: { user: User }) {
     <div className="stack">
       <p className="muted">
         List the networks you normally sign in from. When this is on, a sign-in or an active session from any other address is
-        either reported to you or held until you verify it. Your address as the server sees it:{' '}
+        either allowed with a notification or held until it is verified. Your address as the server sees it:{' '}
         <code className="mono">{data.currentIp ?? 'unknown'}</code> {data.currentIpTrusted ? <span className="badge accent">trusted</span> : <span className="badge warn">not listed</span>}
       </p>
       <ul className="list">
@@ -278,17 +301,17 @@ function TrustedIps({ user }: { user: User }) {
           disabled={!password || !data.currentIp || data.currentIpTrusted}
           onClick={() => void run(() => post('/api/account/trusted-ips', { current: true, label: label || 'Added from this device', password }))}
         >
-          Trust my current IP
+          Add current IP address
         </button>
       </div>
-      <Field label="When a sign-in comes from an unlisted address">
+      <Field label="Sign-ins from unlisted addresses">
         <select value={chosen} onChange={(e) => setPolicy(e.target.value as 'notify' | 'challenge')}>
-          <option value="notify">Let it in, but email me and record it</option>
+          <option value="notify">Allow and notify me by email</option>
           <option value="challenge" disabled={!data.canChallenge}>
-            Hold it until I verify with a code
+            Require verification with a code
           </option>
         </select>
-        {!data.canChallenge && <small>Add an email address or turn on two-factor to use this.</small>}
+        {!data.canChallenge && <small>Requires an email address or two-factor authentication on your account.</small>}
       </Field>
       <div className="row wrap">
         <button className="primary" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: true, policy: chosen }))}>
@@ -303,7 +326,7 @@ function TrustedIps({ user }: { user: User }) {
       </div>
       {error && <p className="error">{error}</p>}
       <p className="muted small">
-        If you ever lock yourself out (for example after moving), an administrator can switch this off for your account.
+        If you lose access (for example, after your network address changes), an administrator can turn this off for your account.
       </p>
     </div>
   );

@@ -21,7 +21,7 @@ export interface BackupTarget {
   probe(): Promise<void>;
 }
 
-export const BACKUP_NAME = /^any-ssh-\d{8}T\d{6}Z\.anybak$/;
+export const BACKUP_NAME = /^any-ssh-\d{8}T\d{6}Z\.(anybak|db)$/;
 
 export type TargetConfig =
   | { kind: 'local'; dir: string }

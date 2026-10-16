@@ -108,3 +108,36 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
   }, [...deps, tick]);
   return { data, error, reload: () => setTick((t) => t + 1) };
 }
+
+/** Tab id kept for the browser session, so returning to a page reopens the same section. */
+export function useRememberedTab<T extends string>(storageKey: string, ids: readonly T[], fallback: T): [T, (id: T) => void] {
+  const [tab, setTab] = useState<T>(() => {
+    try {
+      const saved = sessionStorage.getItem(storageKey);
+      return ids.includes(saved as T) ? (saved as T) : fallback;
+    } catch {
+      return fallback;
+    }
+  });
+  const choose = (id: T) => {
+    setTab(id);
+    try {
+      sessionStorage.setItem(storageKey, id);
+    } catch {
+      /* the tab simply is not remembered */
+    }
+  };
+  return [tab, choose];
+}
+
+export function SubTabs<T extends string>(props: { label: string; tabs: readonly { id: T; label: string }[]; current: T; onChoose: (id: T) => void }) {
+  return (
+    <nav className="subtabs" role="tablist" aria-label={props.label}>
+      {props.tabs.map((t) => (
+        <button key={t.id} role="tab" aria-selected={props.current === t.id} className={props.current === t.id ? 'current' : ''} onClick={() => props.onChoose(t.id)}>
+          {t.label}
+        </button>
+      ))}
+    </nav>
+  );
+}

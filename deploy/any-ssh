@@ -24,9 +24,10 @@ Usage: any-ssh <command>
   backup        Save a copy of the database to $DIR/backups (keeps the newest $KEEP_BACKUPS). Encrypted once
                 a recovery key is set in Settings. With --push, also store one at the destination set there
   backup-key    Make a new backup recovery key pair (keep the secret half offline, paste the public half in Settings)
-  verify-backup <file> <secret-key-file>
-                Decrypt a backup and check it is complete, without changing anything
-  restore <file> <secret-key-file>
+  verify-backup <file> [secret-key-file]
+                Decrypt a backup and check it is complete, without changing anything. The secret key file is
+                needed only for backups encrypted to a recovery key
+  restore <file> [secret-key-file]
                 Replace the database with one from a backup (after verifying it). Stops Any-SSH while it does
   status        Show whether it is running and healthy
   logs          Follow the logs (Ctrl+C to stop)
@@ -173,8 +174,8 @@ backup() {
     while read -r old; do rm -f "$DIR/backups/$old"; done
   say "Backup saved to $DIR/backups/$name"
   case "$name" in
-    *.db) echo "    Not encrypted: set a recovery key in Settings → Backups to encrypt backups, here and off this server." ;;
-    *) echo "    Encrypted. Reading it needs the recovery secret key you saved, plus the master key to use what's inside." ;;
+    *.db) echo "    Not encrypted: choose encryption in Settings → Backups to encrypt backups, here and off this server." ;;
+    *) echo "    Encrypted (with your recovery key, or with this server's master key if Settings → Backups says system-managed)." ;;
   esac
   if [ "$push" = 1 ]; then
     local rc=0
@@ -189,16 +190,21 @@ backup() {
 
 # Runs the backup tool in a throwaway container with the key in its environment (not on the command line, which other
 # users could see) and the backup on standard input (the container's user cannot read root's files).
+# Without a key file the tool tries this server's master key (system-managed backups) or takes an unencrypted one as is.
 backup_tool() {
   local file="$1" key="$2"; shift 2
   [ -r "$file" ] || die "Can't read $file."
-  [ -r "$key" ] || die "Can't read the secret key file $key."
-  ANYSSH_BACKUP_KEY="$(cat "$key")" dc run --rm --no-deps -T -e ANYSSH_BACKUP_KEY app node dist/cli/backup.js restore - "$@" <"$file"
+  if [ -n "$key" ]; then
+    [ -r "$key" ] || die "Can't read the secret key file $key."
+    ANYSSH_BACKUP_KEY="$(cat "$key")" dc run --rm --no-deps -T -e ANYSSH_BACKUP_KEY app node dist/cli/backup.js restore - "$@" <"$file"
+  else
+    dc run --rm --no-deps -T app node dist/cli/backup.js restore - "$@" <"$file"
+  fi
 }
 
 restore_backup() {
   local file="${1:-}" key="${2:-}"
-  if [ -z "$file" ] || [ -z "$key" ]; then die "Usage: sudo any-ssh restore <backup file> <secret key file>"; fi
+  if [ -z "$file" ]; then die "Usage: sudo any-ssh restore <backup file> [secret key file]"; fi
   say "Checking the backup first (nothing is changed yet)"
   backup_tool "$file" "$key" --verify-only || die "The backup didn't pass, so nothing was changed."
   echo
@@ -417,8 +423,8 @@ case "${1:-help}" in
   backup) need_root backup; backup "${2:-}" ;;
   backup-key) dc run --rm --no-deps -T app node dist/cli/backup.js keygen ;;
   verify-backup)
-    if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then die "Usage: any-ssh verify-backup <backup file> <secret key file>"; fi
-    backup_tool "$2" "$3" --verify-only
+    if [ -z "${2:-}" ]; then die "Usage: any-ssh verify-backup <backup file> [secret key file]"; fi
+    backup_tool "$2" "${3:-}" --verify-only
     ;;
   restore) need_root restore; restore_backup "${2:-}" "${3:-}" ;;
   status) dc ps ;;

@@ -1,18 +1,21 @@
 // Backup tooling. Run with `node dist/cli/backup.js <command>` (or `npm run backup -- <command>`).
 //
-//   file [path]                 Write a backup file now: encrypted (.anybak) once a recovery key is set, otherwise the
-//                               plain legacy copy (.db). Prints the path. No path = <data dir>/backups/any-ssh-<time>.
+//   file [path]                 Write a backup file now, protected as Settings → Backups says (.anybak when encrypted;
+//                               a plain .db when unencrypted, or before a recovery key is set). Prints the path.
+//                               No path = <data dir>/backups/any-ssh-<time>.
 //   run                         Do what the schedule does: encrypt, store at the configured destination, prune.
 //   keygen                      Print a new recovery key pair (works offline, on any machine with Node).
-//   decrypt <file> <out>        Decrypt a backup with the secret key (--key-file <file|->, or ANYSSH_BACKUP_KEY).
+//   decrypt <file> <out>        Decrypt a backup (see "Keys" below).
 //   restore <file> [--into <db>] [--force] [--verify-only]
 //                               Decrypt, verify and (unless --verify-only) put the database in place. Stop Any-SSH first.
 //
+// Keys: a recovery-key backup needs its secret key (--key-file <file|->, or ANYSSH_BACKUP_KEY). A system-managed one
+// opens with the master key (current or previous) in the environment. An unencrypted one needs neither.
 // <file> may be "-" or /dev/stdin. The master key is used, when available, to prove the backup opens with it.
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { BackupConfigError, BackupService } from '../backup/service.js';
-import { decryptFile, encryptFile, generateBackupKeyPair, publicKeyFromSecret, backupKeyId } from '../backup/format.js';
+import { encryptFile, generateBackupKeyPair, openBackupFile, publicKeyFromSecret, backupKeyId, serverBackupKeyPair } from '../backup/format.js';
 import { verifyDatabaseFile } from '../backup/verify.js';
 import { AuditLog } from '../audit.js';
 import { loadConfig, type Config } from '../config.js';
@@ -34,13 +37,22 @@ const positional = rest.filter((a, i) => !a.startsWith('--') && !(rest[i - 1]?.s
 const log = { info: (o: object | string, m?: string) => console.log(m ?? (typeof o === 'string' ? o : JSON.stringify(o))), warn: (o: object | string, m?: string) => console.error(m ?? (typeof o === 'string' ? o : JSON.stringify(o))) };
 const stamp = () => new Date().toISOString().replace(/[-:]|\.\d{3}/g, '');
 
-function secretKey(): string {
+/** The recovery secret key, if one was given. */
+function secretKey(): string | null {
   const file = flag('key-file');
   const raw = file ? readFileSync(file === '-' ? '/dev/stdin' : file, 'utf8') : process.env.ANYSSH_BACKUP_KEY;
   delete process.env.ANYSSH_BACKUP_KEY;
-  if (!raw?.trim()) fail('Give the recovery secret key with --key-file <file> (or "-" for standard input), or in ANYSSH_BACKUP_KEY.');
-  return raw.trim();
+  return raw?.trim() || null;
 }
+
+/** Every key a backup could be opened with here: the recovery secret key given, then the system keys of each master key. */
+function openingKeys(config: Config | null): string[] {
+  const given = secretKey();
+  if (given) console.log(`Recovery key ${backupKeyId(publicKeyFromSecret(given))}`);
+  const masters = config ? [config.masterKey, ...config.previousMasterKeys] : [];
+  return [...(given ? [given] : []), ...masters.map((k) => serverBackupKeyPair(k).secretKey)];
+}
+
 
 function fail(message: string, code = 1): never {
   console.error(message);
@@ -75,7 +87,8 @@ try {
 
     case 'file': {
       const { config, db, settings, box } = services();
-      const key = settings.backup.publicKey;
+      const b = settings.backup;
+      const key = b.encryption === 'recovery' ? b.publicKey : b.encryption === 'system' ? serverBackupKeyPair(config.masterKey).publicKey : '';
       const base = path.resolve(positional[0] ?? path.join(config.dataDir, 'backups', `any-ssh-${stamp()}`)).replace(/\.(db|anybak)$/, '');
       mkdirSync(path.dirname(base), { recursive: true, mode: 0o700 });
       const plain = `${base}.${key ? 'snapshot' : 'db'}`;
@@ -90,6 +103,8 @@ try {
         out = `${base}.anybak`;
         await encryptFile(plain, out, key);
         rmSync(plain, { force: true });
+      } else if (b.encryption === 'none') {
+        console.error('Note: backups are set to be stored without encryption (Settings → Backups).');
       } else {
         console.error('Note: no recovery key is set, so this backup is not encrypted. Set one in Settings → Backups.');
       }
@@ -116,23 +131,21 @@ try {
 
     case 'decrypt': {
       const [file, out] = positional;
-      if (!file || !out) fail('Usage: decrypt <backup file> <output file> --key-file <secret key file>');
-      const r = await decryptFile(file === '-' ? '/dev/stdin' : file, path.resolve(out), secretKey());
-      console.log(`Decrypted ${r.bytes} bytes to ${out}`);
+      if (!file || !out) fail('Usage: decrypt <backup file> <output file> [--key-file <secret key file>]');
+      const r = await openBackupFile(file === '-' ? '/dev/stdin' : file, path.resolve(out), openingKeys(tryConfig()));
+      console.log(`${r.keyId ? 'Decrypted' : 'Copied (it was not encrypted)'} ${r.bytes} bytes to ${out}`);
       break;
     }
 
     case 'restore': {
       const [file] = positional;
-      if (!file) fail('Usage: restore <backup file> [--into <database file>] [--force] [--verify-only] --key-file <secret key file>');
+      if (!file) fail('Usage: restore <backup file> [--into <database file>] [--force] [--verify-only] [--key-file <secret key file>]');
       const config = tryConfig();
       const into = path.resolve(flag('into') ?? config?.dbPath ?? 'any-ssh.db');
       const tmp = `${into}.restoring-${stamp()}`;
       mkdirSync(path.dirname(into), { recursive: true, mode: 0o700 });
-      const secret = secretKey();
-      console.log(`Backup key ${backupKeyId(publicKeyFromSecret(secret))}`);
-      const r = await decryptFile(file === '-' ? '/dev/stdin' : file, tmp, secret);
-      console.log(`Decrypted and authenticated ${r.bytes} bytes.`);
+      const r = await openBackupFile(file === '-' ? '/dev/stdin' : file, tmp, openingKeys(config));
+      console.log(r.keyId ? `Decrypted and authenticated ${r.bytes} bytes (key ${r.keyId}).` : `Read ${r.bytes} bytes. This backup is not encrypted.`);
       const box = config ? new SecretBox(config.masterKey, config.previousMasterKeys) : undefined;
       const report = verifyDatabaseFile(tmp, box);
       for (const c of report.checks) console.log(`  ${c.ok ? 'OK  ' : 'FAIL'} ${c.name}: ${c.detail}`);
