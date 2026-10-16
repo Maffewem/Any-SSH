@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BackupFormatError, backupKeyId, parsePublicKey } from './backup/format.js';
+import { BackupFormatError, backupKeyId, parsePublicKey, type BackupEncryption } from './backup/format.js';
 import type { Config, SmtpConfig } from './config.js';
 import type { SecretBox } from './crypto.js';
 import type { DB } from './db.js';
@@ -140,10 +140,15 @@ export interface BackupSettings {
   weekday: number;
   /** How many backups to keep at the destination. */
   keep: number;
-  /** Recovery public key backups are encrypted to ('' = not set). */
+  /** How backups are protected. See docs/SECURITY.md "Backups" for the trade-offs. */
+  encryption: BackupEncryption;
+  /** Recovery public key backups are encrypted to ('' = not set). Used when encryption is 'recovery'. */
   publicKey: string;
   target: BackupTargetSettings;
 }
+
+/** Whether backups can run: a destination, and a recovery key when the mode needs one. */
+export const backupReady = (b: BackupSettings) => b.target.kind !== 'none' && (b.encryption !== 'recovery' || !!b.publicKey);
 
 export interface BackupSecrets {
   s3SecretKey?: string;
@@ -151,7 +156,7 @@ export interface BackupSecrets {
   sftpPrivateKey?: string;
 }
 
-const DEFAULT_BACKUP: BackupSettings = { enabled: false, frequency: 'daily', hourUtc: 3, weekday: 0, keep: 14, publicKey: '', target: { kind: 'none' } };
+const DEFAULT_BACKUP: BackupSettings = { enabled: false, frequency: 'daily', hourUtc: 3, weekday: 0, keep: 14, encryption: 'recovery', publicKey: '', target: { kind: 'none' } };
 
 const backupHost = z.string().trim().min(1).max(253).regex(/^[A-Za-z0-9.:-]+$/, 'Enter a hostname or IP address');
 
@@ -202,8 +207,11 @@ export const backupSettingsSchema = z
     hourUtc: z.number().int().min(0).max(23).default(3),
     weekday: z.number().int().min(0).max(6).default(0),
     keep: z.number().int().min(1).max(365).default(14),
+    encryption: z.enum(['recovery', 'system', 'none']).default('recovery'),
     publicKey: z.string().trim().max(200).default(''),
     target: backupTargetSchema,
+    /** Must be true to save unencrypted backups, so it is never chosen by accident. */
+    acceptUnencrypted: z.boolean().default(false),
   })
   .superRefine((v, ctx) => {
     if (v.publicKey) {
@@ -213,8 +221,11 @@ export const backupSettingsSchema = z
         ctx.addIssue({ code: 'custom', path: ['publicKey'], message: err instanceof BackupFormatError ? err.message : 'Invalid key' });
       }
     }
-    if (v.target.kind !== 'none' && !v.publicKey) {
-      ctx.addIssue({ code: 'custom', path: ['publicKey'], message: 'Set a recovery key first: backups are always encrypted.' });
+    if (v.encryption === 'recovery' && v.target.kind !== 'none' && !v.publicKey) {
+      ctx.addIssue({ code: 'custom', path: ['publicKey'], message: 'Set a recovery key first, or choose another kind of encryption.' });
+    }
+    if (v.encryption === 'none' && !v.acceptUnencrypted) {
+      ctx.addIssue({ code: 'custom', path: ['acceptUnencrypted'], message: 'Confirm that you want backups stored without encryption.' });
     }
     if (v.enabled && v.target.kind === 'none') {
       ctx.addIssue({ code: 'custom', path: ['target'], message: 'Choose where scheduled backups go.' });
@@ -345,7 +356,16 @@ export class Settings {
     } else {
       target = t;
     }
-    const stored: BackupSettings = { enabled: input.enabled, frequency: input.frequency, hourUtc: input.hourUtc, weekday: input.weekday, keep: input.keep, publicKey: input.publicKey, target };
+    const stored: BackupSettings = {
+      enabled: input.enabled,
+      frequency: input.frequency,
+      hourUtc: input.hourUtc,
+      weekday: input.weekday,
+      keep: input.keep,
+      encryption: input.encryption,
+      publicKey: input.publicKey,
+      target,
+    };
     this.write('backup', JSON.stringify(stored), Object.keys(secrets).length ? this.box.seal(JSON.stringify(secrets), settingContext('backup')) : null, actorId);
 
     // Names and old/new values of what changed. Secrets are reported only as present or absent.
@@ -356,7 +376,7 @@ export class Settings {
       changed.push(name);
       changes[name] = { from, to };
     };
-    for (const k of ['enabled', 'frequency', 'hourUtc', 'weekday', 'keep', 'publicKey'] as const) note(k, before[k], stored[k]);
+    for (const k of ['enabled', 'frequency', 'hourUtc', 'weekday', 'keep', 'encryption', 'publicKey'] as const) note(k, before[k], stored[k]);
     const bt = before.target as Record<string, unknown>;
     const at = target as Record<string, unknown>;
     for (const k of new Set([...Object.keys(bt), ...Object.keys(at)])) note(k === 'kind' ? 'destination' : `destination.${k}`, bt[k], at[k]);
@@ -422,6 +442,7 @@ export class Settings {
       hourUtc: b.hourUtc,
       weekday: b.weekday,
       keep: b.keep,
+      encryption: b.encryption,
       publicKey: b.publicKey,
       keyId: b.publicKey ? backupKeyId(b.publicKey) : null,
       target:

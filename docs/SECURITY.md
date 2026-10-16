@@ -106,27 +106,33 @@ rotation.
   auth method were used, and each key shows when it was last used, so unexpected use stands out.
 
 **Keep the master key out of the database backup.** A stolen database without the key yields no usable secrets; the two
-together yield everything. Backups are therefore protected twice: encrypted to a recovery key (see Backups), and the
-secrets inside stay sealed under the master key.
+together yield everything. Backups are therefore protected twice by default: encrypted to a recovery key (see Backups),
+and the secrets inside stay sealed under the master key.
 
 ## Backups
 
-Admins can have Any-SSH write encrypted backups to S3-compatible storage or SFTP on a schedule (Settings → Backups; see
-docs/DEPLOY.md for use).
+Admins can have Any-SSH write backups to S3-compatible storage, SFTP or the data volume on a schedule (Settings → Backups;
+see docs/DEPLOY.md for use). The admin chooses one of three encryption modes:
+
+| Mode | Who can read a backup | Trade-off |
+| --- | --- | --- |
+| **Recovery key** (default) | Only the holder of the recovery secret key (plus the master key to use the secrets inside). | Strongest: a compromised server, a stolen bucket, or both together, cannot read old backups. The secret key must be kept safe; lose it and the backups are unreadable. |
+| **System-managed** | Anyone with the master key. The backup key pair is derived from the master key (HKDF-SHA256, never stored), so restore needs nothing else. | The storage provider still sees only ciphertext, but a stolen server (or master key) together with a backup can decrypt it. No extra key to lose. After a master key rotation, older system-managed backups need the old key (kept in `ANYSSH_PREVIOUS_MASTER_KEYS` during rotation, and tried automatically on restore). |
+| **None** | Anyone who can read the file. | The plain SQLite file: usernames, emails, password hashes (Argon2id), TOTP and session tables, server addresses, host keys and the audit log are readable. SSH keys, server passwords and setting secrets stay sealed under the master key. Choosing it needs an explicit confirmation (`acceptUnencrypted`) and the password, and the UI asks again when the destination is S3 or SFTP. The run history marks each unencrypted backup. |
 
 | Control | Implementation |
 | --- | --- |
-| Encryption | Public-key, in the style of age. Each file uses a fresh ephemeral X25519 key; the shared secret goes through HKDF-SHA256 to an AES-256-GCM key. Data is in 1 MiB frames with counter nonces, a "last frame" flag in the nonce and the header as associated data, so frames cannot be reordered, dropped, truncated or moved between files. |
-| Who can decrypt | Only the holder of the recovery **secret key**. The server stores just the public key, so a compromised server, a stolen bucket or an insider with storage access cannot read old backups. The secret key is generated on request (or offline with `any-ssh backup-key`), shown once and never stored or logged. Backups also remain useless without the master key. |
-| Never plaintext off the server | The SQLite snapshot is encrypted before it leaves the data volume; the S3/SFTP code only ever sees ciphertext, and the snapshot and temporary files are removed afterwards. A destination cannot be set without a recovery key. |
-| Integrity | Before encryption the snapshot must pass SQLite's integrity check, schema check, the audit log hash chain and a master key check (every stored secret opens). After upload the stored size must match, S3 uploads carry `Content-MD5`, SFTP uploads are written as `.partial` and renamed, and the SHA-256 of each backup is kept in the run history. Restore authenticates every frame and refuses wrong keys, tampering, truncation and trailing data before touching anything. |
+| Encryption | Recovery-key and system-managed modes share one format: public-key, in the style of age. Each file uses a fresh ephemeral X25519 key; the shared secret goes through HKDF-SHA256 to an AES-256-GCM key. Data is in 1 MiB frames with counter nonces, a "last frame" flag in the nonce and the header as associated data, so frames cannot be reordered, dropped, truncated or moved between files. |
+| Who can decrypt | See the modes above. In recovery-key mode the server stores just the public key; the secret key is generated on request (or offline with `any-ssh backup-key`), shown once and never stored or logged. Every backup's header carries its key ID, and the run history records the mode used. |
+| Never plaintext off the server (encrypted modes) | The SQLite snapshot is encrypted before it leaves the data volume; the S3/SFTP code only ever sees ciphertext, and the snapshot and temporary files are removed afterwards. Recovery-key mode cannot be saved with a destination but no key. |
+| Integrity | Before encryption the snapshot must pass SQLite's integrity check, schema check, the audit log hash chain and a master key check (every stored secret opens). After upload the stored size must match, S3 uploads carry `Content-MD5`, SFTP uploads are written as `.partial` and renamed, and the SHA-256 of each backup is kept in the run history. Restore authenticates every frame of an encrypted backup and refuses wrong keys, tampering, truncation and trailing data before touching anything (an unencrypted backup has only the database checks). |
 | Credentials | S3 secret keys and SFTP passwords/private keys are sealed under `setting:backup` with the master key, re-sealed by key rotation, and never returned by the API. They are dropped when the endpoint/bucket/key ID (S3) or host/port/username (SFTP) changes without new ones being entered. |
-| Changing the target | Changing the key, destination or schedule needs the admin's password again (rate-limited), is audited by field name only, and sends the admin a security notice, so a hijacked admin session cannot quietly redirect copies of the database. |
+| Changing the target | Changing the encryption mode, key, destination or schedule needs the admin's password again (rate-limited), is audited by field name only, and sends the admin a security notice, so a hijacked admin session cannot quietly redirect copies of the database. |
 | Host trust | SFTP requires the server's host key fingerprint to be entered before any connection; a mismatch is refused and the connection test reports what was presented. S3 uses HTTPS (HTTP is allowed for a LAN MinIO since content is encrypted and requests are signed). Destinations are resolved through the same SSRF guard as SSH targets (loopback, link-local and metadata addresses refused unless `ANYSSH_ALLOW_LOOPBACK_TARGETS`). As with SMTP, an admin can still point backups at any other host the server can reach. |
 | Scheduling | An in-process scheduler (hourly, daily or weekly in UTC, checked each minute). Missed slots run when the server is back; failures retry every 30 minutes up to three times. Runs left unfinished by a crash are closed as failed on start. |
-| Retention | After a successful upload, only the newest N `any-ssh-*.anybak` files are kept at the destination; other files in the folder are never touched. Retention failures are reported as a warning, not a failure of the backup. Use bucket versioning/object lock if you want protection against deletion by a compromised server. |
+| Retention | After a successful upload, only the newest N `any-ssh-*.anybak` / `any-ssh-*.db` files are kept at the destination; other files in the folder are never touched. Retention failures are reported as a warning, not a failure of the backup. Use bucket versioning/object lock if you want protection against deletion by a compromised server. |
 | Failure notice | The Settings page shows the last result, next run, history and a stale warning (no success for two periods). Admins with email get a failure email, at most once a day. Every run is audited (`backup.run`), as are tests and key generation. |
-| Restore | `any-ssh restore` / `any-ssh verify-backup` on the host. Never in the web UI: restore replaces the accounts that would authorise it, and the secret key must not be typed into a possibly compromised server. |
+| Restore | `any-ssh restore` / `any-ssh verify-backup` on the host. The tool works out the mode from the file: it tries the recovery secret key if one is given, then the system key of the current and previous master keys, and takes an unencrypted file as is; the same verification runs in every case. Never in the web UI: restore replaces the accounts that would authorise it, and the secret key must not be typed into a possibly compromised server. |
 
 Limits: encryption streams in 1 MiB frames, but an S3 upload reads the finished backup into memory and sends it as a single PUT (up to 5 GB). Backups are only as fresh
 as the schedule; for a seconds-level recovery point use Litestream. The audit log is part of the database, so restoring

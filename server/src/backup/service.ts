@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdir, rename, rm, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { AuditLog } from '../audit.js';
 import type { Config } from '../config.js';
 import type { SecretBox } from '../crypto.js';
 import type { DB } from '../db.js';
 import { emails, type Mailer } from '../mail.js';
-import type { BackupFrequency, Settings } from '../settings.js';
+import { backupReady, type BackupFrequency, type Settings } from '../settings.js';
 import { BACKUP_NAME, createTarget, type BackupTarget } from './targets.js';
-import { backupKeyId, encryptFile } from './format.js';
+import { backupKeyId, encryptFile, serverBackupKeyPair, type BackupEncryption } from './format.js';
 import { verifyDatabaseFile } from './verify.js';
 
 type Log = { info(obj: object | string, msg?: string): void; warn(obj: object | string, msg?: string): void };
@@ -29,6 +31,7 @@ export interface BackupRun {
   sha256: string | null;
   destination: string | null;
   keyId: string | null;
+  encryption: BackupEncryption;
   error: string | null;
   warning: string | null;
 }
@@ -44,6 +47,7 @@ interface RunRow {
   sha256: string | null;
   destination: string | null;
   key_id: string | null;
+  encryption: BackupEncryption;
   error: string | null;
   warning: string | null;
 }
@@ -59,6 +63,7 @@ const toRun = (r: RunRow): BackupRun => ({
   sha256: r.sha256,
   destination: r.destination,
   keyId: r.key_id,
+  encryption: r.encryption,
   error: r.error,
   warning: r.warning,
 });
@@ -85,6 +90,12 @@ export function lastSlot(now: number, s: { frequency: BackupFrequency; hourUtc: 
 }
 
 const stampOf = (t: number) => new Date(t).toISOString().replace(/[-:]|\.\d{3}/g, '');
+async function sha256Of(file: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest('hex');
+}
+
 const clipError = (err: unknown) => (err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ').trim().slice(0, 400);
 
 export class BackupService {
@@ -92,7 +103,15 @@ export class BackupService {
   private busy = false;
 
   constructor(
-    private readonly deps: { db: DB; settings: Settings; box: SecretBox; audit: AuditLog; mailer: Mailer; config: Pick<Config, 'dataDir' | 'allowLoopbackTargets'>; log: Log },
+    private readonly deps: {
+      db: DB;
+      settings: Settings;
+      box: SecretBox;
+      audit: AuditLog;
+      mailer: Mailer;
+      config: Pick<Config, 'dataDir' | 'allowLoopbackTargets' | 'masterKey'>;
+      log: Log;
+    },
   ) {}
 
   private get dir(): string {
@@ -106,7 +125,7 @@ export class BackupService {
     const secrets = settings.backupSecrets();
     const t = b.target;
     if (t.kind === 'none') throw new BackupConfigError('Choose where backups go first.');
-    if (!b.publicKey) throw new BackupConfigError('Set a recovery key first: backups are always encrypted.');
+    if (b.encryption === 'recovery' && !b.publicKey) throw new BackupConfigError('Set a recovery key first, or choose another kind of encryption.');
     if (t.kind === 'local') return createTarget({ kind: 'local', dir: this.dir });
     if (t.kind === 's3') {
       if (!secrets.s3SecretKey) throw new BackupConfigError('Enter the S3 secret access key.');
@@ -151,7 +170,7 @@ export class BackupService {
     const lastRow = this.deps.db.prepare("SELECT * FROM backup_runs WHERE outcome != 'running' ORDER BY started_at DESC LIMIT 1").get() as RunRow | undefined;
     const successRow = this.deps.db.prepare("SELECT * FROM backup_runs WHERE outcome = 'success' ORDER BY started_at DESC LIMIT 1").get() as RunRow | undefined;
     const running = !!this.deps.db.prepare("SELECT 1 FROM backup_runs WHERE outcome = 'running' AND started_at > ?").get(now - STALE_RUN);
-    const configured = b.target.kind !== 'none' && !!b.publicKey;
+    const configured = backupReady(b);
     const lastSuccessAt = successRow?.started_at ?? null;
     // A schedule that has produced nothing for two periods is a problem even without a recorded failure.
     const stale = b.enabled && configured && (lastSuccessAt === null ? now - this.firstEnabledGuess(now) > 2 * PERIOD[b.frequency] : now - lastSuccessAt > 2 * PERIOD[b.frequency]);
@@ -185,12 +204,23 @@ export class BackupService {
     this.busy = true;
     const id = randomUUID();
     const startedAt = Date.now();
-    const name = `any-ssh-${stampOf(startedAt)}.anybak`;
-    const keyId = backupKeyId(cfg.publicKey);
-    db.prepare("INSERT INTO backup_runs (id, started_at, trigger, outcome, name, destination, key_id) VALUES (?, ?, ?, 'running', ?, ?, ?)").run(id, startedAt, trigger, name, target.label, keyId);
+    const encryption = cfg.encryption;
+    // The system key is re-derived from the current master key each time, so it follows key rotation.
+    const publicKey = encryption === 'recovery' ? cfg.publicKey : encryption === 'system' ? serverBackupKeyPair(this.deps.config.masterKey).publicKey : null;
+    const name = `any-ssh-${stampOf(startedAt)}.${publicKey ? 'anybak' : 'db'}`;
+    const keyId = publicKey ? backupKeyId(publicKey) : null;
+    db.prepare("INSERT INTO backup_runs (id, started_at, trigger, outcome, name, destination, key_id, encryption) VALUES (?, ?, ?, 'running', ?, ?, ?, ?)").run(
+      id,
+      startedAt,
+      trigger,
+      name,
+      target.label,
+      keyId,
+      encryption,
+    );
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
     const snapshot = path.join(this.dir, `.snapshot-${id}.db`);
-    const encrypted = path.join(this.dir, `.${name}.tmp`);
+    const outgoing = path.join(this.dir, `.${name}.tmp`);
     let warning: string | null = null;
     try {
       await db.backup(snapshot);
@@ -199,9 +229,17 @@ export class BackupService {
         const bad = report.checks.find((c) => !c.ok)!;
         throw new Error(`The database failed its check (${bad.name}: ${bad.detail}), so it was not backed up.`);
       }
-      const { bytes, sha256 } = await encryptFile(snapshot, encrypted, cfg.publicKey);
-      await rm(snapshot, { force: true });
-      const stored = await target.put(encrypted, name);
+      let bytes: number;
+      let sha256: string;
+      if (publicKey) {
+        ({ bytes, sha256 } = await encryptFile(snapshot, outgoing, publicKey));
+        await rm(snapshot, { force: true });
+      } else {
+        await rename(snapshot, outgoing);
+        bytes = await fileSize(outgoing);
+        sha256 = await sha256Of(outgoing);
+      }
+      const stored = await target.put(outgoing, name);
       if (stored !== bytes) throw new Error(`The destination reports ${stored} bytes for a ${bytes} byte backup, so the upload is not trusted.`);
       try {
         await this.prune(target, cfg.keep);
@@ -209,7 +247,7 @@ export class BackupService {
         warning = `The backup was saved, but removing old ones failed: ${clipError(err)}`;
       }
       db.prepare("UPDATE backup_runs SET outcome = 'success', finished_at = ?, bytes = ?, sha256 = ?, warning = ? WHERE id = ?").run(Date.now(), bytes, sha256, warning, id);
-      audit.record({ actorId: actor?.id ?? null, actorUsername: actor?.username ?? null, action: 'backup.run', targetType: 'backup', targetId: name, ip: actor?.ip ?? null, details: { trigger, destination: target.label, bytes, keyId } });
+      audit.record({ actorId: actor?.id ?? null, actorUsername: actor?.username ?? null, action: 'backup.run', targetType: 'backup', targetId: name, ip: actor?.ip ?? null, details: { trigger, destination: target.label, bytes, encryption, keyId } });
       this.deps.log.info({ name, bytes, destination: target.label }, 'Backup stored');
     } catch (err) {
       const message = clipError(err);
@@ -220,7 +258,7 @@ export class BackupService {
     } finally {
       this.busy = false;
       await rm(snapshot, { force: true });
-      await rm(encrypted, { force: true });
+      await rm(outgoing, { force: true });
     }
     return toRun(db.prepare('SELECT * FROM backup_runs WHERE id = ?').get(id) as RunRow);
   }
@@ -247,7 +285,7 @@ export class BackupService {
   /** Is a scheduled backup due? Missed slots (server was off) run as soon as the server is back. */
   due(now = Date.now()): boolean {
     const b = this.deps.settings.backup;
-    if (!b.enabled || b.target.kind === 'none' || !b.publicKey) return false;
+    if (!b.enabled || !backupReady(b)) return false;
     const slot = lastSlot(now, b);
     const last = this.deps.db.prepare("SELECT started_at, outcome FROM backup_runs WHERE trigger = 'schedule' ORDER BY started_at DESC LIMIT 1").get() as { started_at: number; outcome: string } | undefined;
     const anySuccess = this.deps.db.prepare("SELECT 1 FROM backup_runs WHERE outcome = 'success' AND started_at >= ?").get(slot);

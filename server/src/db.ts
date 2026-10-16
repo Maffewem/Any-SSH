@@ -272,6 +272,10 @@ const MIGRATIONS: string[] = [
   -- Free-form labels for finding servers (a JSON array of strings, kept in the order given).
   ALTER TABLE servers ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
   `,
+  `
+  -- How each backup was protected (every backup before this column was encrypted to a recovery key).
+  ALTER TABLE backup_runs ADD COLUMN encryption TEXT NOT NULL DEFAULT 'recovery' CHECK (encryption IN ('recovery', 'system', 'none'));
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
