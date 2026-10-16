@@ -268,6 +268,10 @@ const MIGRATIONS: string[] = [
   );
   INSERT INTO update_agent (id) VALUES (1);
   `,
+  `
+  -- Free-form labels for finding servers (a JSON array of strings, kept in the order given).
+  ALTER TABLE servers ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

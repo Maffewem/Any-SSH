@@ -35,6 +35,7 @@ import { UpdateChecker } from './updates.js';
 import { UpdateRequests } from './updateRequests.js';
 import { updateNoticeText } from './routes/version.js';
 import { registerVersionRoutes } from './routes/version.js';
+import { registerHealthRoutes } from './routes/health.js';
 
 /** Header the web client sends on every state-changing request (see docs/SECURITY.md, CSRF). */
 export const CSRF_HEADER = 'x-any-ssh';
@@ -157,6 +158,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   registerBackupRoutes(app, ctx);
   registerTerminalRoute(app, ctx);
   registerVersionRoutes(app, ctx);
+  registerHealthRoutes(app, ctx);
 
   if (config.webRoot && existsSync(path.join(config.webRoot, 'index.html'))) {
     await app.register(fastifyStatic, { root: config.webRoot, wildcard: false });

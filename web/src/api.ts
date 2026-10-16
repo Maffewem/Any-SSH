@@ -153,6 +153,7 @@ export interface Server {
   /** A different key the server presented; connections stay refused until the owner accepts or dismisses it. */
   hostKeyChange: HostKeyChange | null;
   notes: string;
+  tags: string[];
   access: Access;
   credentials: ShareCredentials;
   canShare: boolean;
@@ -281,4 +282,60 @@ export function downloadText(filename: string, text: string): void {
 
 export function formatTime(ts: number | null | undefined): string {
   return ts ? new Date(ts).toLocaleString() : '—';
+}
+
+export interface HealthProbe {
+  reachable: boolean;
+  latencyMs: number | null;
+  error: string | null;
+  checkedAt: number;
+}
+
+export interface Health {
+  generatedAt: number;
+  app: {
+    version: string;
+    commit: string | null;
+    builtAt: string | null;
+    startedAt: number;
+    uptimeSeconds: number;
+    node: string;
+    schemaVersion: number;
+    updateAvailable: boolean | null;
+    updateCheckedAt: number | null;
+    terminals: { open: number; detached: number };
+  };
+  storage: { freeBytes: number | null; totalBytes: number | null; databaseBytes: number | null };
+  certificate: { host: string; notAfter: number | null; daysLeft: number | null; issuer: string | null; trusted: boolean | null; error: string | null; checkedAt: number } | null;
+  backups: { configured: boolean; scheduled: boolean; stale: boolean; lastSuccessAt: number | null; lastOutcome: string | null };
+  summary: {
+    servers: number;
+    reachable: number;
+    unreachable: number;
+    viaJumpHost: number;
+    hostKeyChanged: number;
+    hostKeyUnverified: number;
+    jumpHostsDown: number;
+    noJumpHostAvailable: boolean;
+  };
+  servers: {
+    id: string;
+    name: string;
+    host: string;
+    port: number;
+    owner: string;
+    hostKey: 'pinned' | 'unverified' | 'changed';
+    route: { mode: JumpMode; jumpHost: string | null; testable: boolean };
+    probe: HealthProbe | null;
+  }[];
+  jumpHosts: {
+    id: string;
+    name: string;
+    host: string;
+    port: number;
+    enabled: boolean;
+    hostKey: 'pinned' | 'unverified';
+    serverCount: number;
+    probe: HealthProbe | null;
+  }[];
 }

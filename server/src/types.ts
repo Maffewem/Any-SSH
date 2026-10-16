@@ -84,6 +84,8 @@ export interface ServerRow {
   host_key_pending_type: string | null;
   host_key_pending_at: number | null;
   notes: string;
+  /** JSON array of strings. */
+  tags: string;
   created_at: number;
   updated_at: number;
 }
