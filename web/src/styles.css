@@ -90,7 +90,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .content { flex: 1; overflow-y: auto; width: 100%; padding: 1.25rem max(1.25rem, calc((100% - 1100px) / 2)); padding-bottom: max(1.25rem, env(safe-area-inset-bottom)); }
 .page-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
 .page-head h1 { margin: 0; }
-.search { max-width: 320px; margin-bottom: 1rem; }
+.search-wrap { position: relative; max-width: 420px; margin-bottom: 0.75rem; }
+.search-wrap .search { padding-left: 2.2rem; padding-right: 2.4rem; }
+.search-icon { position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+button.search-clear { position: absolute; right: 0.2rem; top: 50%; transform: translateY(-50%); min-height: 36px; min-width: 36px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 1.4rem; line-height: 1; }
+.result-count { margin: 0 0 0.75rem; }
+.tag-filter-label { align-self: center; margin-right: 0.25rem; }
+@media (max-width: 640px) { .search-wrap { max-width: none; } }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.85rem; }
 .server-card { display: flex; flex-direction: column; justify-content: space-between; gap: 0.75rem; }
@@ -201,7 +207,7 @@ td.details { max-width: 360px; overflow-wrap: anywhere; color: var(--muted); }
 /* Tags */
 .tags, .tag-filter { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .tags { margin-top: 0.5rem; }
-.tag-filter { margin-bottom: 1rem; }
+.tag-filter { margin-bottom: 0.75rem; }
 button.tag { font-size: 0.75rem; padding: 0.1rem 0.55rem; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
 button.tag.on { color: var(--accent); border-color: var(--accent); }
 
