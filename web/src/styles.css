@@ -210,3 +210,17 @@ button.tag.on { color: var(--accent); border-color: var(--accent); }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1.25rem; margin: 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
+
+.limits-table th[scope='row'] { color: var(--text); font-weight: normal; font-size: inherit; width: 45%; }
+.limits-table th[scope='row'] small, .limits-table td small { display: block; color: var(--muted); font-size: 0.85rem; margin-top: 0.3rem; }
+.limits-table td select { width: auto; max-width: 100%; margin-bottom: 0.35rem; }
+.limit-input { display: inline-flex; align-items: center; gap: 0.4rem; }
+.limit-input input { width: 5.5rem; }
+.limit-input span { color: var(--muted); font-size: 0.9rem; }
+@media (max-width: 640px) {
+  .limits-table thead { display: none; }
+  .limits-table, .limits-table tbody, .limits-table tr, .limits-table th, .limits-table td { display: block; width: auto; }
+  .limits-table tr { border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+  .limits-table th, .limits-table td { border-bottom: 0; padding: 0.4rem 0.8rem; }
+  .limits-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 0.25rem; }
+}
