@@ -276,6 +276,25 @@ const MIGRATIONS: string[] = [
   -- How each backup was protected (every backup before this column was encrypted to a recovery key).
   ALTER TABLE backup_runs ADD COLUMN encryption TEXT NOT NULL DEFAULT 'recovery' CHECK (encryption IN ('recovery', 'system', 'none'));
   `,
+  `
+  -- Self-service registration. registration_state is NULL for every ordinary account; 'unverified' accounts have not
+  -- confirmed their email address and 'pending_approval' ones are waiting for an administrator. Both stay disabled.
+  ALTER TABLE users ADD COLUMN registration_state TEXT CHECK (registration_state IN ('unverified', 'pending_approval'));
+  ALTER TABLE users ADD COLUMN email_verified_at INTEGER;
+  -- Email verification links share the single-use token table, so its purpose list gains 'verify'.
+  CREATE TABLE auth_tokens_new (
+    token_hash  TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose     TEXT NOT NULL CHECK (purpose IN ('invite', 'reset', 'verify')),
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,
+    used_at     INTEGER
+  );
+  INSERT INTO auth_tokens_new SELECT token_hash, user_id, purpose, created_at, expires_at, used_at FROM auth_tokens;
+  DROP TABLE auth_tokens;
+  ALTER TABLE auth_tokens_new RENAME TO auth_tokens;
+  CREATE INDEX auth_tokens_user ON auth_tokens(user_id);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

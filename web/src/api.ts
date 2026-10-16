@@ -5,6 +5,8 @@ export interface User {
   email: string | null;
   role: 'admin' | 'user';
   status: 'active' | 'disabled';
+  /** Set while a self-registered account is waiting for email confirmation or for an administrator. */
+  registrationState: 'unverified' | 'pending_approval' | null;
   mfaEnabled: boolean;
   mustChangePassword: boolean;
   lastLoginAt: number | null;
@@ -39,8 +41,19 @@ export interface SettingsView {
     lockoutMinutes: number;
     notifyOwner: boolean;
   };
+  registration: { source: 'environment' | 'web'; mode: RegistrationMode; mailReady: boolean };
+  turnstile: { source: 'environment' | 'web'; siteKey: string; signup: boolean; reset: boolean; login: boolean; hasSecretKey: boolean };
   maintenance: MaintenanceView;
   backup: BackupSettingsView;
+}
+
+/** invite: administrators create accounts. approval: anyone may register, an administrator approves. open: anyone may register. */
+export type RegistrationMode = 'invite' | 'approval' | 'open';
+
+/** What the sign-in and Create account pages need before anyone is signed in. */
+export interface AuthConfig {
+  registration: RegistrationMode;
+  turnstile: { siteKey: string; signup: boolean; reset: boolean; login: boolean } | null;
 }
 
 export interface MaintenanceView {

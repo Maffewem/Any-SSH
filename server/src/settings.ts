@@ -63,7 +63,7 @@ export const securitySettingsSchema = z.object({
   notifyOwner: z.boolean(),
 });
 
-export type SettingsGroup = 'mail' | 'sessions' | 'limits' | 'security' | 'backup' | 'maintenance';
+export type SettingsGroup = 'mail' | 'sessions' | 'limits' | 'security' | 'backup' | 'maintenance' | 'registration' | 'turnstile';
 export type SettingsSource = 'environment' | 'web';
 
 export const maintenanceSettingsSchema = z.object({
@@ -73,6 +73,41 @@ export const maintenanceSettingsSchema = z.object({
   durationMinutes: z.number().int().min(15).max(24 * 60),
   timezone: z.string().max(64).refine(validTimezone, 'Unknown timezone (use a name like Europe/London)'),
 }).refine((m) => !m.enabled || m.days.length > 0, { message: 'Select at least one day.', path: ['days'] });
+
+// ---- Registration and Turnstile ----
+
+/** invite: only administrators create accounts. approval: anyone can register, an administrator approves. open: anyone can register. */
+export type RegistrationMode = 'invite' | 'approval' | 'open';
+
+export interface RegistrationSettings {
+  mode: RegistrationMode;
+}
+
+export const DEFAULT_REGISTRATION: RegistrationSettings = { mode: 'invite' };
+
+export const registrationSettingsSchema = z.object({ mode: z.enum(['invite', 'approval', 'open']) });
+
+export interface TurnstileSettings {
+  siteKey: string;
+  /** Require the Cloudflare check on the Create account page. */
+  signup: boolean;
+  /** Require it when requesting a password reset email. */
+  reset: boolean;
+  /** Require it on the Sign in page. */
+  login: boolean;
+}
+
+export const DEFAULT_TURNSTILE: TurnstileSettings = { siteKey: '', signup: false, reset: false, login: false };
+
+export const turnstileSettingsSchema = z.object({
+  siteKey: z.string().trim().max(100).regex(/^[A-Za-z0-9_-]*$/, 'Enter the site key exactly as Cloudflare shows it'),
+  /** Omitted = keep the stored secret key; '' = remove it. */
+  secretKey: z.string().trim().max(200).regex(/^[A-Za-z0-9_-]*$/, 'Enter the secret key exactly as Cloudflare shows it').optional(),
+  signup: z.boolean(),
+  reset: z.boolean(),
+  login: z.boolean(),
+});
+export type TurnstileSettingsInput = z.infer<typeof turnstileSettingsSchema>;
 
 export const settingContext = (id: string) => `setting:${id}`;
 
@@ -393,6 +428,66 @@ export class Settings {
     this.write('maintenance', JSON.stringify(maintenanceSettingsSchema.parse(input)), null, actorId);
   }
 
+  get registration(): RegistrationSettings {
+    const row = this.row('registration');
+    return row ? { ...DEFAULT_REGISTRATION, ...(JSON.parse(row.value) as Partial<RegistrationSettings>) } : DEFAULT_REGISTRATION;
+  }
+
+  setRegistration(input: RegistrationSettings, actorId: string): void {
+    this.write('registration', JSON.stringify(registrationSettingsSchema.parse(input)), null, actorId);
+  }
+
+  get turnstile(): TurnstileSettings {
+    const row = this.row('turnstile');
+    return row ? { ...DEFAULT_TURNSTILE, ...(JSON.parse(row.value) as Partial<TurnstileSettings>) } : DEFAULT_TURNSTILE;
+  }
+
+  /** The Cloudflare secret key, or null when none is saved. Never sent to clients. */
+  turnstileSecret(): string | null {
+    const row = this.row('turnstile');
+    return row?.value_enc ? this.box.openString(row.value_enc, settingContext('turnstile')) : null;
+  }
+
+  /** The check is available only when both keys are saved. */
+  get turnstileConfigured(): boolean {
+    return !!this.turnstile.siteKey && !!this.row('turnstile')?.value_enc;
+  }
+
+  /** Whether the check is required for this action. Enforced settings without a complete key pair still count (the check then fails closed). */
+  turnstileRequired(action: 'signup' | 'reset' | 'login'): boolean {
+    return this.turnstile[action];
+  }
+
+  /**
+   * Saves the Turnstile settings. Changing the site key drops the stored secret unless a new one is given, so a hijacked
+   * admin session cannot swap in its own site key and keep using the saved secret.
+   */
+  setTurnstile(input: TurnstileSettingsInput, actorId: string): { changed: string[]; changes: Record<string, { from: unknown; to: unknown }> } {
+    const before = this.turnstile;
+    const hadSecret = this.turnstileSecret() !== null;
+    let secret: string | null;
+    if (input.secretKey !== undefined) secret = input.secretKey || null;
+    else secret = input.siteKey === before.siteKey ? this.turnstileSecret() : null;
+    if ((input.signup || input.reset || input.login) && (!input.siteKey || !secret)) {
+      throw new Error('Enter both the site key and the secret key before turning the check on.');
+    }
+    const stored: TurnstileSettings = { siteKey: input.siteKey, signup: input.signup, reset: input.reset, login: input.login };
+    this.write('turnstile', JSON.stringify(stored), secret ? this.box.seal(secret, settingContext('turnstile')) : null, actorId);
+    const changed: string[] = [];
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    for (const k of ['siteKey', 'signup', 'reset', 'login'] as const) {
+      if (before[k] !== stored[k]) {
+        changed.push(k);
+        changes[k] = { from: before[k], to: stored[k] };
+      }
+    }
+    if (hadSecret !== !!secret || input.secretKey) {
+      changed.push('secretKey');
+      changes.secretKey = { from: hadSecret, to: !!secret };
+    }
+    return { changed, changes };
+  }
+
   get security(): SecuritySettings {
     const row = this.row('security');
     return row ? { ...DEFAULT_SECURITY, ...(JSON.parse(row.value) as Partial<SecuritySettings>) } : DEFAULT_SECURITY;
@@ -431,6 +526,8 @@ export class Settings {
         defaults: { maxTerminalsPerUser: this.env.maxTerminalsPerUser, maxTerminalsPerAdmin: null, detachMinutes: this.env.detachMinutes },
       },
       security: { source: this.source('security'), ...this.security },
+      registration: { source: this.source('registration'), ...this.registration, mailReady: this.mail.smtp !== null },
+      turnstile: { source: this.source('turnstile'), ...this.turnstile, hasSecretKey: this.turnstileSecret() !== null },
       maintenance: { source: this.source('maintenance'), ...this.maintenance },
       backup: this.describeBackup(),
     };

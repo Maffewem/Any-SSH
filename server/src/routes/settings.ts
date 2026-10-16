@@ -5,10 +5,10 @@ import { emailSchema } from './account.js';
 import { badRequest, clientIp, parse, requireAdmin } from '../http.js';
 import { emails } from '../mail.js';
 import { changes } from '../audit.js';
-import { limitSettingsSchema, maintenanceSettingsSchema, mailSettingsSchema, securitySettingsSchema, sessionSettingsSchema, type SettingsGroup } from '../settings.js';
+import { limitSettingsSchema, maintenanceSettingsSchema, mailSettingsSchema, registrationSettingsSchema, securitySettingsSchema, sessionSettingsSchema, turnstileSettingsSchema, type SettingsGroup } from '../settings.js';
 import type { AppContext } from '../types.js';
 
-const groupParam = z.object({ group: z.enum(['mail', 'sessions', 'limits', 'security', 'backup', 'maintenance']) });
+const groupParam = z.object({ group: z.enum(['mail', 'sessions', 'limits', 'security', 'backup', 'maintenance', 'registration', 'turnstile']) });
 
 /** Admin-only runtime settings. Every change is audited; secrets are write-only. */
 export function registerSettingsRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -58,6 +58,34 @@ export function registerSettingsRoutes(app: FastifyInstance, ctx: AppContext): v
     const before = settings.security;
     settings.setSecurity(body, user.id);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'security', ip: clientIp(req), details: { changes: changes(before, body) } });
+    return settings.describe();
+  });
+
+  app.put('/api/admin/settings/registration', async (req) => {
+    const { user } = requireAdmin(req);
+    const body = parse(registrationSettingsSchema, req.body);
+    // Verification links and approval notices only work if mail really leaves the server.
+    if (body.mode !== 'invite' && settings.mail.smtp === null) {
+      throw badRequest('Set up email first (Settings → Email). New accounts have to confirm their email address.');
+    }
+    const before = settings.registration;
+    settings.setRegistration(body, user.id);
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'registration', ip: clientIp(req), details: { changes: changes(before, body) } });
+    if (before.mode !== body.mode) notify(ctx, req.log, user, `the account registration setting was changed to “${body.mode}”`);
+    return settings.describe();
+  });
+
+  app.put('/api/admin/settings/turnstile', async (req) => {
+    const { user } = requireAdmin(req);
+    const body = parse(turnstileSettingsSchema, req.body);
+    let result: ReturnType<typeof settings.setTurnstile>;
+    try {
+      result = settings.setTurnstile(body, user.id);
+    } catch (err) {
+      throw badRequest(err instanceof Error ? err.message : String(err));
+    }
+    audit.record({ actorId: user.id, actorUsername: user.username, action: 'admin.settings_change', targetType: 'settings', targetId: 'turnstile', ip: clientIp(req), details: { changed: result.changed, changes: result.changes } });
+    if (result.changed.length) notify(ctx, req.log, user, `the Cloudflare browser check settings were changed (${result.changed.join(', ')})`);
     return settings.describe();
   });
 

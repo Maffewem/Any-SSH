@@ -193,6 +193,9 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     const target = findUser(id);
     if (!target) throw notFound('User not found');
 
+    if (target.registration_state && body.status === 'active') {
+      throw badRequest('This person registered themselves. Use Approve to let them in.');
+    }
     const losesAdmin =
       target.role === 'admin' && target.status === 'active' && (body.role === 'user' || body.status === 'disabled');
     if (target.id === admin.id && (body.role || body.status)) throw badRequest('You can’t change your own role or status.');

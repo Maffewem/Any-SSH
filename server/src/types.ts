@@ -8,6 +8,7 @@ import type { Mailer } from './mail.js';
 import type { SessionStore } from './sessions.js';
 import type { Settings } from './settings.js';
 import type { TerminalRegistry } from './ssh/registry.js';
+import type { Turnstile } from './turnstile.js';
 import type { UpdateChecker } from './updates.js';
 import type { UpdateRequests } from './updateRequests.js';
 
@@ -29,6 +30,8 @@ export interface UserRow {
   locked_until: number | null;
   trusted_ip_enabled: number;
   trusted_ip_policy: 'notify' | 'challenge';
+  registration_state: 'unverified' | 'pending_approval' | null;
+  email_verified_at: number | null;
   last_login_at: number | null;
   password_changed_at: number;
   created_at: number;
@@ -132,6 +135,7 @@ export interface AppContext {
   terminals: TerminalRegistry;
   mailer: Mailer;
   settings: Settings;
+  turnstile: Turnstile;
   updates: UpdateChecker;
   updateRequests: UpdateRequests;
   backups: BackupService;
@@ -145,6 +149,7 @@ export function publicUser(u: UserRow) {
     email: u.email,
     role: u.role,
     status: u.status,
+    registrationState: u.registration_state,
     mfaEnabled: u.totp_enabled === 1,
     mustChangePassword: u.must_change_password === 1,
     lastLoginAt: u.last_login_at,

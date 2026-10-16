@@ -23,13 +23,16 @@ import {
   totpUri,
   verifyTotp,
 } from '../totp.js';
+import { requireHuman } from '../turnstile.js';
 import { publicUser, type AppContext, type UserRow } from '../types.js';
 
 const GENERIC_LOGIN_ERROR = 'The username or password isn’t correct.';
 
 const loginBody = z.object({
-  username: z.string().trim().min(1).max(64),
+  /** A username or, for self-registered accounts, the email address. */
+  username: z.string().trim().min(1).max(254),
   password: z.string().min(1).max(1024),
+  captchaToken: z.string().max(2048).optional(),
 });
 const mfaBody = z.union([
   z.object({ code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code') }),
@@ -90,8 +93,9 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const body = parse(loginBody, req.body);
     const ip = clientIp(req);
     assertIpAllowed(ctx, ip);
+    await requireHuman(ctx, req, 'login', body.captchaToken);
     const ua = req.headers['user-agent'] ?? null;
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(body.username) as UserRow | undefined;
+    const user = db.prepare('SELECT * FROM users WHERE username = ? OR email = ? COLLATE NOCASE').get(body.username, body.username) as UserRow | undefined;
 
     if (!user) {
       await verifyDummy(body.password);

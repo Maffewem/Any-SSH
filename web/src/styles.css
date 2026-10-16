@@ -239,3 +239,13 @@ button.tag.on { color: var(--accent); border-color: var(--accent); }
 .confirm-actions { justify-content: flex-end; gap: 0.5rem; }
 .notice-row { display: flex; gap: 0.75rem; align-items: center; justify-content: space-between; flex-wrap: wrap; margin: 0.5rem 0 0; }
 .notice-row p { flex: 1 1 18rem; }
+
+/* Account registration choices and the browser check */
+.radio-list { display: grid; gap: 0.6rem; }
+.radio { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.7rem 0.8rem; border: 1px solid var(--border, #d0d5dd); border-radius: 8px; cursor: pointer; }
+.radio input { width: auto; margin-top: 0.2rem; flex: none; }
+.radio .block { display: block; }
+.check-group { border: 0; padding: 0; margin: 0; display: grid; gap: 0.5rem; }
+.check-group legend { padding: 0; margin-bottom: 0.4rem; font-weight: 600; }
+.check-group .check { white-space: normal; }
+.turnstile { min-height: 65px; max-width: 100%; overflow: hidden; }

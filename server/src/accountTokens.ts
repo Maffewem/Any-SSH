@@ -3,11 +3,12 @@ import { randomToken, sha256 } from './crypto.js';
 import { emails } from './mail.js';
 import type { AppContext, UserRow } from './types.js';
 
-export type TokenPurpose = 'invite' | 'reset';
+export type TokenPurpose = 'invite' | 'reset' | 'verify';
 
 export const TOKEN_TTL_MS: Record<TokenPurpose, number> = {
   invite: 72 * 3600_000,
   reset: 30 * 60_000,
+  verify: 24 * 3600_000,
 };
 
 /**
@@ -40,7 +41,18 @@ export function findToken(ctx: AppContext, token: string): { row: TokenRow; user
   if (!token || token.length > 100) return null;
   const row = ctx.db.prepare('SELECT * FROM auth_tokens WHERE token_hash = ?').get(sha256(token)) as TokenRow | undefined;
   if (!row || row.used_at !== null || row.expires_at < Date.now()) return null;
+  // Verification links belong to accounts that are not active yet; see findVerifyToken.
+  if (row.purpose === 'verify') return null;
   const user = ctx.db.prepare("SELECT * FROM users WHERE id = ? AND status = 'active'").get(row.user_id) as UserRow | undefined;
+  return user ? { row, user } : null;
+}
+
+/** Finds a usable email verification token and the self-registered account it belongs to, or null. */
+export function findVerifyToken(ctx: AppContext, token: string): { row: TokenRow; user: UserRow } | null {
+  if (!token || token.length > 100) return null;
+  const row = ctx.db.prepare('SELECT * FROM auth_tokens WHERE token_hash = ?').get(sha256(token)) as TokenRow | undefined;
+  if (!row || row.purpose !== 'verify' || row.used_at !== null || row.expires_at < Date.now()) return null;
+  const user = ctx.db.prepare("SELECT * FROM users WHERE id = ? AND registration_state = 'unverified'").get(row.user_id) as UserRow | undefined;
   return user ? { row, user } : null;
 }
 
@@ -51,7 +63,7 @@ export function consumeToken(ctx: AppContext, tokenHash: string): boolean {
 
 /** Links carry the token in the URL fragment, which browsers never send to servers or in Referer headers. */
 export function tokenUrl(ctx: AppContext, purpose: TokenPurpose, token: string): string {
-  return `${ctx.config.publicUrl}/#/${purpose === 'invite' ? 'welcome' : 'reset'}?token=${token}`;
+  return `${ctx.config.publicUrl}/#/${purpose === 'invite' ? 'welcome' : purpose === 'verify' ? 'verify' : 'reset'}?token=${token}`;
 }
 
 /**
