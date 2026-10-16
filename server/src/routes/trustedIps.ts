@@ -12,7 +12,7 @@ const MAX_ENTRIES = 50;
 const passwordField = z.string().min(1).max(1024);
 
 /**
- * The user's own trusted IP list (Account → Trusted IP addresses). Changes that could weaken the
+ * The user's own trusted IP addresses (Account → Trusted IP addresses). Changes that could weaken the
  * protection need the account password, so a stolen session cannot trust the thief's address.
  */
 export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -45,7 +45,7 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
     if (await verifyPassword(user.password_hash, password)) return;
     recordReauthFailure(ctx, req.log, clientIp(req), user);
     audit.record({ actorId: user.id, actorUsername: user.username, action, outcome: 'failure', ip: clientIp(req) });
-    throw badRequest('Password is incorrect.');
+    throw badRequest('The password isn’t correct.');
   }
 
   app.get('/api/account/trusted-ips', async (req) => {
@@ -69,22 +69,22 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
     let value: string;
     if (body.current) {
       const ip = normaliseIp(clientIp(req));
-      if (!ip) throw badRequest('Your current IP address could not be determined.');
+      if (!ip) throw badRequest('Couldn’t determine your current IP address.');
       value = ip;
     } else {
       const parsed = parseTrustedEntry(body.cidr ?? '');
       if ('error' in parsed) throw badRequest(parsed.error);
       value = parsed.value;
     }
-    if (entryRows(user.id).length >= MAX_ENTRIES) throw badRequest(`You can list at most ${MAX_ENTRIES} addresses.`);
+    if (entryRows(user.id).length >= MAX_ENTRIES) throw badRequest(`You can add up to ${MAX_ENTRIES} IP addresses.`);
     if (db.prepare('SELECT 1 FROM trusted_ips WHERE user_id = ? AND cidr = ?').get(user.id, value)) {
-      throw new HttpError(409, 'That address is already on the list.', 'conflict');
+      throw new HttpError(409, 'That IP address is already on the list.', 'conflict');
     }
     db.prepare('INSERT INTO trusted_ips (id, user_id, cidr, label, created_at) VALUES (?, ?, ?, ?, ?)').run(
       newTrustedId(), user.id, value, body.label, Date.now(),
     );
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.trusted_ip_add', ip: clientIp(req), details: { entry: value } });
-    notify(ctx, req.log, user, `${value} was added to your trusted IP list`);
+    notify(ctx, req.log, user, `${value} was added to your trusted IP addresses`);
     return view(user, clientIp(req));
   });
 
@@ -98,7 +98,7 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
     if (fresh.trusted_ip_enabled) {
       const rest = trustedEntries(ctx, user.id).filter((e) => e !== row.cidr);
       if (!isTrustedIp(rest, clientIp(req))) {
-        throw badRequest('That entry covers the address you are using now. Turn the feature off first, or add another entry that covers this address.');
+        throw badRequest('That entry includes the IP address you’re using now. Turn off trusted IP addresses first, or add another entry that covers it.');
       }
     }
     db.prepare('DELETE FROM trusted_ips WHERE id = ?').run(id);
@@ -115,10 +115,10 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
     await confirmPassword(req, user, body.password, 'user.trusted_ip_settings');
     if (body.enabled) {
       if (!isTrustedIp(trustedEntries(ctx, user.id), clientIp(req))) {
-        throw badRequest('Add the address you are using now to the list first, or you would be locked out of this session.');
+        throw badRequest('Add the IP address you’re using now to the list first, or you’ll be locked out of this session.');
       }
       if (body.policy === 'challenge' && !user.email && !user.totp_enabled) {
-        throw badRequest('Holding sign-ins from new addresses needs a way to verify you. Add an email address or turn on two-factor first.');
+        throw badRequest('To verify sign-ins from other IP addresses, add an email address or turn on 2-step verification first.');
       }
     }
     const before = { enabled: user.trusted_ip_enabled === 1, policy: user.trusted_ip_policy };
@@ -131,7 +131,7 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
       actorId: user.id, actorUsername: user.username, action: 'user.trusted_ip_settings', ip: clientIp(req),
       details: { enabled: body.enabled, policy: body.policy, changes: changes(before, { enabled: body.enabled, policy: body.policy }) },
     });
-    notify(ctx, req.log, user, body.enabled ? `the trusted IP list was turned on (${body.policy === 'challenge' ? 'sign-ins from unlisted addresses require verification' : 'sign-ins from unlisted addresses are allowed with a notification'})` : 'the trusted IP list was turned off');
+    notify(ctx, req.log, user, body.enabled ? `the trusted IP addresses was turned on (${body.policy === 'challenge' ? 'sign-ins from other IP addresses require verification' : 'sign-ins from other IP addresses are allowed, and you’ll be emailed'})` : 'the trusted IP addresses was turned off');
     return view(user, clientIp(req));
   });
 }

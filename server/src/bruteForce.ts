@@ -112,7 +112,7 @@ export class BruteForce {
 /** Throws 429 when the caller's address is locked out. Call before doing any work on unauthenticated routes. */
 export function assertIpAllowed(ctx: AppContext, ip: string): void {
   if (ctx.bruteForce.ipLockedUntil(ip) !== null) {
-    throw new HttpError(429, 'Too many failed attempts from this address. Try again later.', 'ip_locked');
+    throw new HttpError(429, 'Too many failed attempts from this IP address. Try again later.', 'ip_locked');
   }
 }
 
@@ -129,7 +129,7 @@ export function recordAuthFailure(
     const mins = Math.max(1, Math.round((res.accountLockedUntil - Date.now()) / 60_000));
     notify(
       ctx, log, user,
-      `your account was locked for ${mins} minute${mins === 1 ? '' : 's'} after ${res.failures} failed attempts (latest from ${ip}). It unlocks by itself, or an administrator can unlock it sooner. If this was not you, consider changing your password`,
+      `your account was locked for ${mins} minute${mins === 1 ? '' : 's'} after ${res.failures} failed attempts (latest from ${ip}). It will unlock automatically, or an administrator can unlock it sooner. If this wasn’t you, consider changing your password`,
     );
   }
   return res;
@@ -143,6 +143,6 @@ export function recordReauthFailure(ctx: AppContext, log: FastifyBaseLogger, ip:
   const res = recordAuthFailure(ctx, log, ip, 'reauth', user);
   if (res.accountLockedUntil) {
     ctx.sessions.destroyAllForUser(user.id);
-    ctx.terminals.closeForUser(user.id, 'Your account was locked after repeated failed attempts.');
+    ctx.terminals.closeForUser(user.id, 'Your account was locked after too many failed attempts.');
   }
 }

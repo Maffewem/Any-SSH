@@ -22,10 +22,10 @@ export function KeysPage() {
         </div>
       </div>
       <p className="muted small">
-        Add the public key to the server’s <code>~/.ssh/authorized_keys</code>.
+        To use a key, add its public key to the server’s <code>~/.ssh/authorized_keys</code> file.
       </p>
       {(error || actionError) && <p className="error">{error ?? actionError}</p>}
-      {data?.keys.length === 0 && <div className="empty card">No keys yet.</div>}
+      {data?.keys.length === 0 && <div className="empty card">You don’t have any SSH keys yet. Generate or import one to get started.</div>}
       <div className="stack">
         {data?.keys.map((k) => (
           <article key={k.id} className="card">
@@ -33,7 +33,7 @@ export function KeysPage() {
               <div>
                 <h3>{k.name}</h3>
                 <p className="muted small mono">
-                  {k.type} · {k.fingerprint} · added {formatTime(k.createdAt)} · {k.lastUsedAt ? `last used ${formatTime(k.lastUsedAt)}` : 'never used'}
+                  {k.type} · {k.fingerprint} · Added {formatTime(k.createdAt)} · {k.lastUsedAt ? `Last used ${formatTime(k.lastUsedAt)}` : 'Never used'}
                 </p>
               </div>
               <div className="row">
@@ -44,9 +44,9 @@ export function KeysPage() {
                   onClick={async () => {
                     if (
                       !(await confirm({
-                        title: `Delete key ${k.name}`,
-                        message: 'Servers using it will stop working.',
-                        confirmLabel: 'Delete key',
+                        title: `Delete ${k.name}?`,
+                        message: 'Servers that use this key will no longer connect until you choose another. This can’t be undone.',
+                        confirmLabel: 'Delete SSH key',
                         danger: true,
                       }))
                     )
@@ -54,7 +54,7 @@ export function KeysPage() {
                     setActionError(null);
                     try {
                       await del(`/api/keys/${k.id}`);
-                      toast.success(`Key ${k.name} deleted.`);
+                      toast.success(`${k.name} deleted.`);
                       reload();
                     } catch (e) {
                       setActionError(e instanceof Error ? e.message : String(e));
@@ -81,11 +81,11 @@ function GenerateDialog({ onClose, onDone }: { onClose: () => void; onDone: () =
   const [type, setType] = useState('ed25519');
   return (
     <Modal title="Generate SSH key" onClose={onClose}>
-      <Form submit="Generate" success="Key generated." onSubmit={async () => (await post('/api/keys/generate', { name, type }), onDone())}>
+      <Form submit="Generate key" success="SSH key generated." onSubmit={async () => (await post('/api/keys/generate', { name, type }), onDone())}>
         <Field label="Name">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. work servers" required autoFocus />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="For example, Work servers" required autoFocus />
         </Field>
-        <Field label="Type">
+        <Field label="Key type">
           <select value={type} onChange={(e) => setType(e.target.value)}>
             <option value="ed25519">Ed25519 (recommended)</option>
             <option value="ecdsa">ECDSA P-256</option>
@@ -102,10 +102,10 @@ function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
   const [privateKey, setPrivateKey] = useState('');
   const [passphrase, setPassphrase] = useState('');
   return (
-    <Modal title="Import private key" onClose={onClose}>
+    <Modal title="Import SSH key" onClose={onClose}>
       <Form
-        submit="Import"
-        success="Key imported."
+        submit="Import key"
+        success="SSH key imported."
         onSubmit={async () => {
           await post('/api/keys/import', { name, privateKey, ...(passphrase ? { passphrase } : {}) });
           setPrivateKey('');
@@ -116,7 +116,7 @@ function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
         </Field>
-        <Field label="Private key" hint="OpenSSH or PEM format. It is encrypted as soon as it reaches the server.">
+        <Field label="Private key" hint="OpenSSH or PEM format. The key is encrypted as soon as it reaches the server.">
           <textarea
             className="mono"
             value={privateKey}
@@ -143,20 +143,19 @@ function ExportDialog({ keyRow, onClose }: { keyRow: SshKey; onClose: () => void
   return (
     <Modal title={`Export ${keyRow.name}`} onClose={onClose}>
       <p className="muted small">
-        This downloads the private key itself. Anyone who has it can log in as you, so keep it somewhere safe and set its
-        permissions to <code>600</code>. The export is recorded in the audit log.
+        This downloads the private key itself. Anyone who has it can sign in as you, so store it somewhere safe and set its permissions to <code>600</code>. The export is recorded in the activity log.
       </p>
       {done ? (
-        <p className="ok">Downloaded. Delete it from your Downloads folder once you have put it where it belongs.</p>
+        <p className="ok">Download complete. Once you’ve moved the key somewhere safe, delete it from your Downloads folder.</p>
       ) : (
         <Form
-          submit="Confirm and download"
+          submit="Download private key"
           onSubmit={async () => {
             const res = await post<{ filename: string; privateKey: string }>(`/api/keys/${keyRow.id}/export`, { password });
             setPassword('');
             downloadText(res.filename, res.privateKey);
             setDone(true);
-            toast.success('Key downloaded.');
+            toast.success('Private key downloaded.');
           }}
         >
           <Field label="Your Any-SSH password">

@@ -60,7 +60,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     mustChange: boolean;
   }) {
     const exists = db.prepare('SELECT 1 FROM users WHERE username = ?').get(u.username);
-    if (exists) throw new HttpError(409, 'That username is taken.', 'conflict');
+    if (exists) throw new HttpError(409, 'That username is already taken.', 'conflict');
     assertEmailFree(u.email);
     const id = randomUUID();
     const now = Date.now();
@@ -78,11 +78,11 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
   app.post('/api/setup', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => {
     const body = parse(setupBody, req.body);
     assertIpAllowed(ctx, clientIp(req));
-    if (userCount() > 0 || !setup.token) throw forbidden('Setup has already been completed.');
+    if (userCount() > 0 || !setup.token) throw forbidden('Setup is already complete.');
     if (!safeEqual(body.setupToken.trim(), setup.token)) {
       recordAuthFailure(ctx, req.log, clientIp(req), 'setup');
       audit.record({ action: 'setup.create_admin', outcome: 'failure', ip: clientIp(req) });
-      throw forbidden('The setup token is incorrect.');
+      throw forbidden('The setup token isn’t correct.');
     }
     const problem = checkPasswordPolicy(body.password, body.username);
     if (problem) throw badRequest(problem);
@@ -144,7 +144,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
       await ctx.mailer.send(msg);
     } catch (err) {
       log.warn({ err }, 'Failed to send account email');
-      return { purpose, sent: false, error: 'The email could not be sent. Share this link with them yourself.', url };
+      return { purpose, sent: false, error: 'The email couldn’t be sent. Share this link with them yourself.', url };
     }
     return ctx.mailer.delivery === 'smtp' ? { purpose, sent: true } : { purpose, sent: false, url };
   }
@@ -176,8 +176,8 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     const { id } = parse(idParam, req.params);
     const target = findUser(id);
     if (!target) throw notFound('User not found');
-    if (!target.email) throw badRequest('This user has no email address.');
-    if (target.status !== 'active') throw badRequest('This account is disabled.');
+    if (!target.email) throw badRequest('This user doesn’t have an email address.');
+    if (target.status !== 'active') throw badRequest('This account is turned off.');
     const result = await sendAccountLink(target, admin.display_name, req.log);
     audit.record({
       actorId: admin.id, actorUsername: admin.username, action: `admin.user_send_${result.purpose}`, targetType: 'user', targetId: id,
@@ -195,7 +195,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
 
     const losesAdmin =
       target.role === 'admin' && target.status === 'active' && (body.role === 'user' || body.status === 'disabled');
-    if (target.id === admin.id && (body.role || body.status)) throw badRequest('You cannot change your own role or status.');
+    if (target.id === admin.id && (body.role || body.status)) throw badRequest('You can’t change your own role or status.');
     if (losesAdmin && activeAdminCount() <= 1) throw badRequest('There must be at least one active administrator.');
     const emailChanging = body.email !== undefined && (body.email ?? null)?.toLowerCase() !== target.email?.toLowerCase();
     if (emailChanging) assertEmailFree(body.email, id);
@@ -213,7 +213,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     if (body.status === 'disabled' || (body.role && body.role !== target.role)) {
       // Privilege changes take effect immediately: drop sessions and live terminals.
       sessions.destroyAllForUser(id);
-      terminals.closeForUser(id, 'Your account was changed by an administrator.');
+      terminals.closeForUser(id, 'An administrator changed your account.');
     }
     audit.record({
       actorId: admin.id, actorUsername: admin.username, action: 'admin.user_update', targetType: 'user', targetId: id,
@@ -234,7 +234,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     const { id } = parse(idParam, req.params);
     const target = findUser(id);
     if (!target) throw notFound('User not found');
-    if (target.id === admin.id) throw badRequest('Use your account page to change your own password.');
+    if (target.id === admin.id) throw badRequest('To change your own password, go to My account.');
     const temporaryPassword = generateTemporaryPassword();
     const now = Date.now();
     db.prepare(
@@ -242,7 +242,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
          password_changed_at = ?, updated_at = ? WHERE id = ?`,
     ).run(await hashPassword(temporaryPassword), now, now, id);
     const signedOut = sessions.destroyAllForUser(id);
-    terminals.closeForUser(id, 'Your password was reset by an administrator.');
+    terminals.closeForUser(id, 'An administrator reset your password.');
     notify(ctx, req.log, target, 'an administrator reset your password and all your devices were signed out');
     audit.record({
       actorId: admin.id, actorUsername: admin.username, action: 'admin.user_reset_password', targetType: 'user', targetId: id,
@@ -261,7 +261,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     ).run(Date.now(), id);
     db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').run(id);
     sessions.destroyAllForUser(id);
-    notify(ctx, req.log, target, 'an administrator turned off your two-factor authentication');
+    notify(ctx, req.log, target, 'an administrator turned off your 2-step verification');
     audit.record({
       actorId: admin.id, actorUsername: admin.username, action: 'admin.user_reset_mfa', targetType: 'user', targetId: id,
       ip: clientIp(req), details: { username: target.username },
@@ -269,7 +269,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     return { ok: true };
   });
 
-  // Recovery for someone held out by their trusted IP list (for example after moving house).
+  // Recovery for someone held out by their trusted IP addresses (for example after moving house).
   app.post('/api/admin/users/:id/reset-trusted-ips', async (req) => {
     const admin = requireAdmin(req).user;
     const { id } = parse(idParam, req.params);
@@ -277,7 +277,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     if (!target) throw notFound('User not found');
     db.prepare('UPDATE users SET trusted_ip_enabled = 0, updated_at = ? WHERE id = ?').run(Date.now(), id);
     db.prepare('UPDATE sessions SET ip_challenge = 0 WHERE user_id = ?').run(id);
-    notify(ctx, req.log, target, 'an administrator turned off your trusted IP list');
+    notify(ctx, req.log, target, 'an administrator turned off your trusted IP addresses');
     audit.record({
       actorId: admin.id, actorUsername: admin.username, action: 'admin.user_reset_trusted_ips', targetType: 'user', targetId: id,
       ip: clientIp(req), details: { username: target.username },

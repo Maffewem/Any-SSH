@@ -321,7 +321,7 @@ describe('backup settings', () => {
 
     const wrong = await admin.put('/api/admin/settings/backup', settingsBody({ currentPassword: 'not the password at all' }));
     expect(wrong.status).toBe(400);
-    expect(wrong.body.error).toMatch(/Password is incorrect/);
+    expect(wrong.body.error).toMatch(/password isn’t correct/);
     const noKey = await admin.put('/api/admin/settings/backup', settingsBody({ publicKey: '' }));
     expect(noKey.status).toBe(400);
     expect(noKey.body.error).toMatch(/recovery key/);

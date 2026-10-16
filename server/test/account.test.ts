@@ -71,7 +71,7 @@ describe('password reset', () => {
     expect(done.status).toBe(200);
     expect((await client.get('/api/auth/me')).status).toBe(401);
     await new Promise((r) => setTimeout(r, 10));
-    expect(built.mail.sent.at(-1)!.subject).toMatch(/security notice/);
+    expect(built.mail.sent.at(-1)!.subject).toMatch(/security alert/);
 
     const again = new Client(built);
     expect((await again.post('/api/auth/login', { username: 'frank', password: 'harbor-violet-engine-42' })).status).toBe(200);

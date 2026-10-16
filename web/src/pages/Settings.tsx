@@ -6,7 +6,7 @@ import { JumpHostsSection } from './JumpHosts';
 import { VersionCard } from './Version';
 
 function SourceBadge({ source }: { source: 'environment' | 'web' }) {
-  return source === 'web' ? <span className="badge accent">Customised</span> : <span className="badge">Default</span>;
+  return source === 'web' ? <span className="badge accent">Customized</span> : <span className="badge">Default</span>;
 }
 
 function ResetButton({ group, source, onDone }: { group: string; source: 'environment' | 'web'; onDone: (s: SettingsView, reset: true) => void }) {
@@ -18,9 +18,9 @@ function ResetButton({ group, source, onDone }: { group: string; source: 'enviro
       className="ghost small"
       onClick={async () => {
         const ok = await confirm({
-          title: 'Restore default settings',
-          message: 'The values saved on this tab are discarded and the server default is used again.',
-          confirmLabel: 'Restore default',
+          title: 'Restore default settings?',
+          message: 'Your changes to these settings will be discarded and the defaults will be used again.',
+          confirmLabel: 'Restore defaults',
           danger: true,
         });
         if (!ok) return;
@@ -28,7 +28,7 @@ function ResetButton({ group, source, onDone }: { group: string; source: 'enviro
         toast.success('Default settings restored.');
       }}
     >
-      Restore default
+      Restore defaults
     </button>
   );
 }
@@ -52,7 +52,7 @@ export function SettingsPage() {
         <h1>Settings</h1>
       </div>
       <SubTabs label="Settings sections" tabs={TABS} current={tab} onChoose={choose} />
-      <p className="muted small">{TABS.find((t) => t.id === tab)?.blurb} Changes apply immediately.</p>
+      <p className="muted small">{TABS.find((t) => t.id === tab)?.blurb} Changes take effect as soon as you save them.</p>
       {error && <p className="error">{error}</p>}
       {current && (
         <>
@@ -79,12 +79,12 @@ export function SettingsPage() {
 }
 
 const TABS = [
-  { id: 'security', label: 'Security', blurb: 'Session timeouts and protection against repeated failed sign-ins.' },
-  { id: 'access', label: 'Access', blurb: 'Jump hosts that servers can be reached through.' },
-  { id: 'limits', label: 'Limits', blurb: 'Usage limits, set separately for each type of account.' },
-  { id: 'backups', label: 'Backups', blurb: 'Encrypted backups of the Any-SSH database.' },
+  { id: 'security', label: 'Security', blurb: 'Session timeouts and protection against repeated failed sign-in attempts.' },
+  { id: 'access', label: 'Access', blurb: 'Jump hosts that servers can connect through.' },
+  { id: 'limits', label: 'Limits', blurb: 'Usage limits for each type of account.' },
+  { id: 'backups', label: 'Backups', blurb: 'Where Any-SSH backups are stored, how often they run and how they’re encrypted.' },
   { id: 'updates', label: 'Updates', blurb: 'The installed version, update checks and the maintenance window.' },
-  { id: 'notifications', label: 'Notifications', blurb: 'Outgoing email for invitations, password resets and security notices.' },
+  { id: 'notifications', label: 'Email', blurb: 'Email settings for invitations, password resets and security alerts.' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
@@ -110,7 +110,7 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
         </h2>
         <ResetButton group="mail" source={m.source} onDone={onSaved} />
       </div>
-      <p className="muted small">Without email, messages are written to the server log.</p>
+      <p className="muted small">If email isn’t set up, messages are written to the server log instead.</p>
       <Form
         submit="Save email settings"
         success="Email settings saved."
@@ -130,7 +130,7 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
         }}
       >
         <label className="check">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Send email over SMTP
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Send email using an SMTP server
         </label>
         {enabled && (
           <>
@@ -151,23 +151,23 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
                 />
               </Field>
             </div>
-            <Field label="Encryption" hint="Plain, unencrypted SMTP is not offered: email links are credentials.">
+            <Field label="Encryption" hint="Unencrypted SMTP isn’t supported because emailed links can be used to sign in.">
               <select value={security} onChange={(e) => setSecurity(e.target.value as 'tls' | 'starttls')}>
                 <option value="starttls">STARTTLS (usually port 587)</option>
                 <option value="tls">TLS (usually port 465)</option>
               </select>
             </Field>
-            <Field label="Username" hint="Leave empty if the server needs no login.">
+            <Field label="Username" hint="Leave blank if the server doesn’t require sign-in.">
               <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" />
             </Field>
             <Field
               label="Password"
               hint={
                 m.hasPassword && !destinationChanged
-                  ? 'A password is saved. Leave empty to keep it.'
+                  ? 'A password is saved. Leave blank to keep it.'
                   : m.hasPassword
-                    ? 'Changing the server or username removes the saved password, so enter it again.'
-                    : 'Stored encrypted; never shown again.'
+                    ? 'If you change the server or username, you’ll need to enter the password again.'
+                    : 'Stored encrypted and never shown again.'
               }
             >
               <input
@@ -185,27 +185,27 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
             )}
           </>
         )}
-        <Field label="Send from" hint='For example: Any-SSH <any-ssh@example.com>'>
+        <Field label="Sender address" hint='For example: Any-SSH <any-ssh@example.com>'>
           <input value={from} onChange={(e) => setFrom(e.target.value)} required />
         </Field>
       </Form>
 
       <div className="subsection">
         <h3>Send a test email</h3>
-        <p className="muted small">Leave empty to send it to yourself.</p>
+        <p className="muted small">Leave blank to send it to yourself.</p>
         <div className="row wrap">
           <input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" style={{ maxWidth: 320 }} />
           <button
             onClick={async () => {
               try {
                 const r = await post<{ sent: boolean; to: string }>('/api/admin/settings/mail/test', testTo ? { to: testTo } : {});
-                toast.success(r.sent ? `Test email sent to ${r.to}. Check the inbox and spam folder.` : 'SMTP is off, so the message was written to the server log.');
+                toast.success(r.sent ? `Test email sent to ${r.to}. Check your inbox and spam folder.` : 'Email isn’t turned on, so the message was written to the server log.');
               } catch (e) {
                 toast.error(errorMessage(e));
               }
             }}
           >
-            Send test
+            Send test email
           </button>
         </div>
       </div>
@@ -240,15 +240,15 @@ function SessionSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Se
         }}
       >
         <Field
-          label="Lock after (minutes idle)"
-          hint="The screen is hidden and terminals pause until the user re-enters their password. No 2FA code is needed. 0 turns locking off."
+          label="Lock after (minutes of inactivity)"
+          hint="The screen is hidden and terminals pause until the user enters their password again. A 2-step verification code isn’t required. Enter 0 to turn off locking."
         >
           <input value={lockMinutes} onChange={(e) => setLock(e.target.value)} inputMode="numeric" required />
         </Field>
-        <Field label="Sign out after (minutes idle)" hint="Ends the session entirely, closing its terminals. Must be longer than the lock.">
+        <Field label="Sign out after (minutes of inactivity)" hint="Ends the session and closes its terminals. This must be longer than the lock time.">
           <input value={idleMinutes} onChange={(e) => setIdle(e.target.value)} inputMode="numeric" required />
         </Field>
-        <Field label="Maximum session length (hours)" hint="Sign-in, with 2FA, is needed again after this however active the user is. Applies to new sign-ins.">
+        <Field label="Maximum session length (hours)" hint="Users must sign in again, including 2-step verification, after this time even if they’re active. Applies to new sign-ins.">
           <input value={maxHours} onChange={(e) => setMax(e.target.value)} inputMode="numeric" required />
         </Field>
       </Form>
@@ -273,8 +273,7 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
         <ResetButton group="limits" source={l.source} onDone={onSaved} />
       </div>
       <p className="muted small">
-        Limits apply per person. Administrators can be given their own terminal limit; the reconnect window is the same for every account. Changes take
-        effect for the next terminal opened or dropped; terminals already open are not closed.
+        Limits apply to each person. Administrators can have their own terminal limit. The reconnect window is the same for all accounts. Changes apply to terminals opened or disconnected from now on. Terminals that are already open aren’t closed.
       </p>
       <Form
         submit="Save limits"
@@ -303,8 +302,7 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
                 <th scope="row">
                   <strong>Open terminals at once</strong>
                   <small>
-                    The most terminals one person can have open at the same time, across all their devices, including terminals waiting to
-                    reconnect. When reached, opening another is refused until one is closed. Between 1 and 100.
+                    The most terminals one person can have open at the same time across all their devices, including terminals waiting to reconnect. When the limit is reached, they can’t open another until they close one. Enter a number from 1 to 100.
                   </small>
                 </th>
                 <td data-label="Standard users">
@@ -350,9 +348,7 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
                 <th scope="row">
                   <strong>Reconnect window</strong>
                   <small>
-                    If the browser loses its connection (a closed laptop, a dropped mobile signal), the SSH session is kept open this long so
-                    it can be picked up where it left off. After that it is closed. 0 closes it straight away. Signing out, session expiry and
-                    removed access always close it at once.
+                    If the browser loses its connection, for example when a laptop is closed or a mobile signal drops, the SSH session stays open for this long so you can pick up where you left off. After that, it’s closed. Enter 0 to close it immediately. Signing out, session expiry and removed access always close it immediately.
                   </small>
                 </th>
                 <td data-label="All accounts" colSpan={2}>
@@ -360,7 +356,7 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
                     <input value={detach} onChange={(e) => setDetach(e.target.value)} inputMode="numeric" required aria-label="Reconnect window in minutes" />
                     <span>minutes</span>
                   </label>
-                  <small>Applies to all accounts. Default: {plural(d.detachMinutes, 'minute', 'minutes')}. Up to 1440 (24 hours).</small>
+                  <small>Applies to all accounts. Default: {plural(d.detachMinutes, 'minute', 'minutes')}. Maximum: 1440 (24 hours).</small>
                 </td>
               </tr>
             </tbody>
@@ -386,17 +382,16 @@ function SecuritySection({ view, onSaved }: { view: SettingsView; onSaved: (s: S
     <div className="card settings-section">
       <div className="page-head">
         <h2>
-          Brute-force protection <SourceBadge source={b.source} />
+          Protection against failed sign-ins <SourceBadge source={b.source} />
         </h2>
         <ResetButton group="security" source={b.source} onDone={onSaved} />
       </div>
       <p className="muted small">
-        Wrong passwords, 2FA codes, unlock passwords, reset links and re-entered passwords are counted. Too many on one account locks that
-        account; too many from one address blocks that address from signing in. Counters restart after each lockout.
+        Incorrect passwords, 2-step verification codes, unlock passwords and reset links are counted. Too many failed attempts on one account locks that account. Too many from one IP address blocks that address from signing in. The count starts again after each lockout.
       </p>
       <Form
-        submit="Save protection settings"
-        success="Protection settings saved."
+        submit="Save changes"
+        success="Settings saved."
         onSubmit={async () => {
           onSaved(
             await put<SettingsView>('/api/admin/settings/security', {
@@ -409,32 +404,32 @@ function SecuritySection({ view, onSaved }: { view: SettingsView; onSaved: (s: S
           );
         }}
       >
-        <Field label="Lock an account after (failed attempts)" hint="Counted within the window below. Minimum 3.">
+        <Field label="Lock an account after (failed attempts)" hint="Attempts are counted within the time period below. Minimum: 3.">
           <input value={accountThreshold} onChange={(e) => setAccount(e.target.value)} inputMode="numeric" required />
         </Field>
-        <Field label="Block an address after (failed attempts)" hint="Across all accounts, so password spraying is caught too. Keep this above the account value.">
+        <Field label="Block an IP address after (failed attempts)" hint="Counted across all accounts, which also catches password spraying. Set this higher than the account limit.">
           <input value={ipThreshold} onChange={(e) => setIp(e.target.value)} inputMode="numeric" required />
         </Field>
-        <Field label="Counting window (minutes)">
+        <Field label="Time period for counting attempts (minutes)">
           <input value={windowMinutes} onChange={(e) => setWindow(e.target.value)} inputMode="numeric" required />
         </Field>
-        <Field label="Lockout length (minutes)" hint="Admins can unlock an account or address sooner.">
+        <Field label="Lockout duration (minutes)" hint="Administrators can unlock an account or IP address sooner.">
           <input value={lockoutMinutes} onChange={(e) => setLockout(e.target.value)} inputMode="numeric" required />
         </Field>
         <label className="check">
-          <input type="checkbox" checked={notifyOwner} onChange={(e) => setNotify(e.target.checked)} /> Email the account owner when their account is locked
+          <input type="checkbox" checked={notifyOwner} onChange={(e) => setNotify(e.target.checked)} /> Email users when their account is locked
         </label>
       </Form>
       <div className="subsection">
-        <h3>Blocked addresses</h3>
+        <h3>Blocked IP addresses</h3>
         {ips.length === 0 ? (
-          <p className="muted small">None right now. Locked accounts are unlocked from the Users page.</p>
+          <p className="muted small">No IP addresses are blocked right now. To unlock an account, go to the Users page.</p>
         ) : (
           <ul style={{ listStyle: "none", padding: 0 }}>
             {ips.map((l) => (
               <li key={l.ip} className="row wrap">
                 <span className="mono">{l.ip}</span>
-                <span className="muted small">until {formatTime(l.lockedUntil)} after {l.failures} failures</span>
+                <span className="muted small">Blocked until {formatTime(l.lockedUntil)} after {l.failures} failed attempts</span>
                 <button
                   className="small"
                   onClick={async () => {
@@ -473,19 +468,19 @@ function MaintenanceSection({ view, onSaved }: { view: SettingsView; onSaved: (s
         <ResetButton group="maintenance" source={m.source} onDone={onSaved} />
       </div>
       <p className="muted small">
-        When automatic updates may install. Outside the window a new version is only flagged. "Update now" ignores the window.
+        Choose when automatic updates can be installed. Outside this window, new versions are only flagged as available. “Update now” ignores the window.
       </p>
       <Form
-        submit="Save window"
+        submit="Save changes"
         success="Maintenance window saved."
         onSubmit={async () => {
           onSaved(await put<SettingsView>('/api/admin/settings/maintenance', { enabled, days, start, durationMinutes: Number(duration), timezone: timezone.trim() }));
         }}
       >
         <label className="check">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Only install automatic updates inside this window
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Only install automatic updates during this window
         </label>
-        <Field label="Days">
+        <Field label="Days of the week">
           <div>
             {DAY_NAMES.map((name, i) => (
               <label key={name} className="check" style={{ marginRight: 12 }}>
@@ -495,13 +490,13 @@ function MaintenanceSection({ view, onSaved }: { view: SettingsView; onSaved: (s
             ))}
           </div>
         </Field>
-        <Field label="Opens at (24-hour)">
+        <Field label="Start time (24-hour)">
           <input value={start} onChange={(e) => setStart(e.target.value)} placeholder="04:00" required />
         </Field>
-        <Field label="Stays open for (minutes)">
+        <Field label="Duration (minutes)">
           <input value={duration} onChange={(e) => setDuration(e.target.value)} inputMode="numeric" required />
         </Field>
-        <Field label="Timezone" hint="A name such as Europe/London or America/New_York. Daylight saving is followed.">
+        <Field label="Time zone" hint="For example, Europe/London or America/New_York. Daylight saving time is applied automatically.">
           <input value={timezone} onChange={(e) => setTimezone(e.target.value)} required />
         </Field>
       </Form>

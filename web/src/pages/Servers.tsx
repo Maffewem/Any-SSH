@@ -51,7 +51,7 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
             inputMode="search"
             enterKeyHint="search"
             placeholder="Search servers"
-            title="Matches name, host, user, notes, owner and tags"
+            title="Searches names, hosts, usernames, notes, owners and tags"
             aria-label="Search servers"
             autoCapitalize="none"
             autoCorrect="off"
@@ -99,7 +99,7 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
       )}
       {data && data.servers.length === 0 && (
         <div className="empty card">
-          <p>No servers yet. Add one, or ask someone to share theirs with you.</p>
+          <p>You don’t have any servers yet. Add a server, or ask someone to share one with you.</p>
         </div>
       )}
       <div className="grid">
@@ -116,17 +116,17 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
                   s.shareCount > 0 && <span className="badge">Shared with {s.shareCount}</span>
                 ) : (
                   <span className="badge accent">
-                        {s.access === 'manage' ? 'Manager' : 'Shared'} · from {s.owner?.displayName ?? 'unknown'}
+                        {s.access === 'manage' ? 'Manager' : 'Shared'} · from {s.owner?.displayName ?? 'unknown user'}
                   </span>
                 )}
                 <span className="badge">{s.credentials === 'own' ? 'Your own credentials' : authLabel(s.authMethod)}</span>
                 {s.hostKeyChange ? (
-                  <span className="badge warn">Host key CHANGED</span>
+                  <span className="badge warn">Server fingerprint changed</span>
                 ) : (
-                  !s.hostKeyFingerprint && <span className="badge warn">Host key not verified</span>
+                  !s.hostKeyFingerprint && <span className="badge warn">Server fingerprint not verified</span>
                 )}
                 {s.jump.mode !== 'none' && (
-                  <span className="badge">{s.jump.mode === 'auto' ? 'Via closest jump host' : `Via ${s.jump.host?.name ?? 'missing jump host'}`}</span>
+                  <span className="badge">{s.jump.mode === 'auto' ? 'Via the closest jump host' : `Via ${s.jump.host?.name ?? 'a jump host that was removed'}`}</span>
                 )}
               </div>
               {s.tags.length > 0 && (
@@ -143,8 +143,8 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
               <button className="primary" onClick={() => (s.credentials === 'own' ? setConnecting(s) : onConnect(s))}>
                 Connect
               </button>
-              <button className="connect-as" title="Connect as…" aria-label="Connect as another credential" onClick={() => setConnecting(s)}>
-                Connect as ▾
+              <button className="connect-as" title="Connect with different credentials" aria-label="Connect with different credentials" onClick={() => setConnecting(s)}>
+                Connect as…
               </button>
               {s.access !== 'use' && <button onClick={() => setEditing(s)}>Edit</button>}
               {(s.access === 'owner' || s.canShare) && <button onClick={() => setSharing(s)}>Share</button>}
@@ -179,7 +179,7 @@ function parseTags(text: string): string[] {
 }
 
 function authLabel(m: AuthMethod) {
-  return m === 'key' ? 'SSH key' : m === 'password' ? 'Stored password' : 'Password on connect';
+  return m === 'key' ? 'SSH key' : m === 'password' ? 'Saved password' : 'Asks for password';
 }
 
 function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: Server | null; knownTags: string[]; isAdmin: boolean; onClose: () => void; onSaved: () => void }) {
@@ -218,7 +218,7 @@ function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: 
 
   return (
     <Modal title={server ? `Edit ${server.name}` : 'Add server'} onClose={onClose}>
-      <Form submit="Save" success={server ? `${server.name} saved.` : 'Server added.'} onSubmit={save}>
+      <Form submit="Save changes" success={server ? `${server.name} saved.` : 'Server added.'} onSubmit={save}>
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
         </Field>
@@ -238,14 +238,14 @@ function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: 
             <Field label="Authentication">
               <select value={authMethod} onChange={(e) => setAuthMethod(e.target.value as AuthMethod)}>
                 <option value="key">SSH key (recommended)</option>
-                <option value="prompt">Ask for password each time</option>
-                <option value="password">Store password (encrypted)</option>
+                <option value="prompt">Ask for the password each time</option>
+                <option value="password">Save password (stored encrypted)</option>
               </select>
             </Field>
             {authMethod === 'key' && (
-              <Field label="Key" hint={keys.data?.keys.length === 0 ? 'You have no keys yet. Create one on the Keys page.' : undefined}>
+              <Field label="SSH key" hint={keys.data?.keys.length === 0 ? 'You don’t have any SSH keys yet. Create one on the SSH keys page.' : undefined}>
                 <select value={keyId} onChange={(e) => setKeyId(e.target.value)} required>
-                  <option value="">Choose a key…</option>
+                  <option value="">Select an SSH key…</option>
                   {keys.data?.keys.map((k) => (
                     <option key={k.id} value={k.id}>
                       {k.name} ({k.type})
@@ -255,32 +255,32 @@ function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: 
               </Field>
             )}
             {authMethod === 'password' && (
-              <Field label="Password" hint={server?.hasStoredPassword ? 'Leave blank to keep the stored password.' : undefined}>
+              <Field label="Password" hint={server?.hasStoredPassword ? 'Leave blank to keep the saved password.' : undefined}>
                 <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" required={!server?.hasStoredPassword} />
               </Field>
             )}
             <Field
-              label="Route"
+              label="Connection route"
               hint={
                 jumpLocked
-                  ? `An admin sends this server through ${server?.jump.host?.name ?? 'a jump host'}. Only an admin can change that.`
-                  : 'Through a jump host, Any-SSH reaches this server over a relay, and your login to it stays end to end: the jump host never sees your credentials.'
+                  ? `An administrator set this server to connect through ${server?.jump.host?.name ?? 'a jump host'}. Only an administrator can change this.`
+                  : 'With a jump host, Any-SSH reaches this server through a relay. Your sign-in stays end to end encrypted, so the jump host never sees your credentials.'
               }
             >
               <select value={jumpMode} onChange={(e) => setJumpMode(e.target.value as JumpMode)} disabled={jumpLocked}>
-                <option value="none">Direct from Any-SSH</option>
-                <option value="auto">Through the closest jump host</option>
-                {(isAdmin || jumpMode === 'fixed') && <option value="fixed">Through a specific jump host (admin)</option>}
+                <option value="none">Connect directly from Any-SSH</option>
+                <option value="auto">Use the closest jump host</option>
+                {(isAdmin || jumpMode === 'fixed') && <option value="fixed">Use a specific jump host (administrators only)</option>}
               </select>
             </Field>
             {jumpMode === 'fixed' && !jumpLocked && (
               <Field label="Jump host">
                 <select value={jumpHostId} onChange={(e) => setJumpHostId(e.target.value)} required>
-                  <option value="">Choose a jump host…</option>
+                  <option value="">Select a jump host…</option>
                   {jumpHosts.data?.jumpHosts.map((j) => (
                     <option key={j.id} value={j.id}>
                       {j.name}
-                      {j.enabled ? '' : ' (disabled)'}
+                      {j.enabled ? '' : ' (turned off)'}
                     </option>
                   ))}
                 </select>
@@ -288,9 +288,9 @@ function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: 
             )}
           </>
         ) : (
-          <p className="muted">Only the owner can change connection details and credentials.</p>
+          <p className="muted">Only the owner can change the connection details and credentials.</p>
         )}
-        <Field label="Tags" hint="Comma-separated, up to 10.">
+        <Field label="Tags" hint="Separate tags with commas. You can add up to 10.">
           <input value={tags} onChange={(e) => setTags(e.target.value)} autoCapitalize="none" maxLength={400} />
         </Field>
         {knownTags.filter((t) => !parseTags(tags).some((x) => x.toLowerCase() === t.toLowerCase())).length > 0 && (
@@ -317,8 +317,8 @@ function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: 
               className="danger-outline"
               onClick={async () => {
                 const ok = await confirm({
-                  title: `Delete server ${server.name}`,
-                  message: 'It is removed for everyone it is shared with, and open terminals close.',
+                  title: `Delete ${server.name}?`,
+                  message: 'The server is deleted for everyone it’s shared with, and open terminals are closed. This can’t be undone.',
                   confirmLabel: 'Delete server',
                   danger: true,
                 });
@@ -374,7 +374,7 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
   return (
     <Modal title={`Share ${server.name}`} onClose={onClose}>
       <p className="muted small">
-        <strong>Use</strong> lets someone connect; <strong>Manage</strong> also lets them edit it. Shared credentials are never shown to them.
+        <strong>Use</strong> lets people connect to the server. <strong>Manage</strong> also lets them edit it. They can never see saved credentials.
       </p>
       {error && <p className="error">{error}</p>}
       <ul className="list">
@@ -384,7 +384,7 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
               <span>
                 {s.displayName} <span className="muted">@{s.username}</span>
               </span>
-              {s.sharedBy && s.sharedBy !== server.owner?.username && <span className="badge">shared by {s.sharedBy}</span>}
+              {s.sharedBy && s.sharedBy !== server.owner?.username && <span className="badge">Shared by {s.sharedBy}</span>}
             </div>
             <div className="row wrap">
               <select value={s.permission} disabled={!isOwner} onChange={(e) => update(s, { permission: e.target.value as Share['permission'] })}>
@@ -402,7 +402,7 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
               {s.permission === 'manage' && (
                 <label className="check small">
                   <input type="checkbox" checked={s.canReshare} disabled={!isOwner} onChange={(e) => update(s, { canReshare: e.target.checked })} />
-                  Can re-share
+                  Can share with others
                 </label>
               )}
               {(isOwner || s.permission === 'use') && (
@@ -415,12 +415,12 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
         ))}
         {shares.data?.shares.length === 0 && <li className="muted">Not shared with anyone yet.</li>}
       </ul>
-      <Field label="Add people">
+      <Field label="Share with">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or username" autoCapitalize="none" />
       </Field>
-      <Field label="They connect with" hint={server.credentials === 'own' ? 'You use your own credentials here, so anyone you share with must too.' : undefined}>
+      <Field label="Credentials they use" hint={server.credentials === 'own' ? 'You use your own credentials for this server, so people you share it with must use theirs too.' : undefined}>
         <select value={newCredentials} disabled={server.credentials === 'own'} onChange={(e) => setNewCredentials(e.target.value as ShareCredentials)}>
-          <option value="owner">This server’s saved credentials</option>
+          <option value="owner">The server’s saved credentials</option>
           <option value="own">Their own credentials</option>
         </select>
       </Field>
@@ -433,7 +433,7 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
                 {u.displayName} <span className="muted">@{u.username}</span>
               </span>
               <button onClick={() =>
-                run(() => put(`/api/servers/${server.id}/shares/${u.id}`, { permission: 'use', credentials: newCredentials }), `Shared ${server.name} with @${u.username}.`)
+                run(() => put(`/api/servers/${server.id}/shares/${u.id}`, { permission: 'use', credentials: newCredentials }), `${server.name} shared with @${u.username}.`)
               }>
                 Share
               </button>
@@ -495,9 +495,9 @@ function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose
       <Form submit="Connect" onSubmit={submit}>
         <Field label="Connect as">
           <select value={kind} onChange={(e) => setKind(e.target.value as ConnectCredential['type'])}>
-            {!mustBringOwn && <option value="saved">Saved login</option>}
-            <option value="key">One of my keys</option>
-            <option value="oneoff">Pasted key (one-off)</option>
+            {!mustBringOwn && <option value="saved">Saved credentials</option>}
+            <option value="key">One of my SSH keys</option>
+            <option value="oneoff">Paste a key (one time)</option>
             <option value="password">Password</option>
           </select>
         </Field>
@@ -507,9 +507,9 @@ function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose
           </Field>
         )}
         {kind === 'key' && (
-          <Field label="Key" hint={keys.data?.keys.length === 0 ? 'No keys yet. Add one on the Keys page.' : undefined}>
+          <Field label="Key" hint={keys.data?.keys.length === 0 ? 'You don’t have any SSH keys yet. Add one on the SSH keys page.' : undefined}>
             <select value={keyId} onChange={(e) => setKeyId(e.target.value)} required>
-              <option value="">Choose a key…</option>
+              <option value="">Select an SSH key…</option>
               {keys.data?.keys.map((k) => (
                 <option key={k.id} value={k.id}>
                   {k.name} ({k.type})
@@ -520,7 +520,7 @@ function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose
         )}
         {kind === 'oneoff' && (
           <>
-            <Field label="Private key" hint="Kept in memory for this session only.">
+            <Field label="Private key" hint="Used for this connection only and never saved.">
               <textarea
                 className="mono"
                 value={privateKey}
@@ -537,7 +537,7 @@ function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose
             </Field>
           </>
         )}
-        {kind === 'password' && <p className="muted small">You will be asked for the password when the terminal opens.</p>}
+        {kind === 'password' && <p className="muted small">You’ll be asked for the password when the terminal opens.</p>}
       </Form>
     </Modal>
   );
@@ -561,17 +561,17 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
       setError(e instanceof Error ? e.message : String(e));
     }
   };
-  if (!pin && !change) return <p className="muted small">Host key: not verified yet. You will be shown its fingerprint on the first connection.</p>;
+  if (!pin && !change) return <p className="muted small">Server fingerprint: not verified yet. You’ll be shown it the first time you connect.</p>;
   return (
     <div className="hostkey-panel">
       {change && (
         <div className="card warn-card">
           <p className="error">
-            <strong>This server presented a different host key and was refused.</strong> Seen {formatTime(change.seenAt)}.
+            <strong>This server presented a different fingerprint, so the connection was blocked.</strong> Seen {formatTime(change.seenAt)}.
           </p>
-          <p className="muted small">Pinned</p>
+          <p className="muted small">Saved fingerprint</p>
           <p className="fingerprint mono">{pin?.fingerprint}</p>
-          <p className="muted small">Presented</p>
+          <p className="muted small">Fingerprint the server presented</p>
           <p className="fingerprint mono">
             {change.type ?? ''}
             <br />
@@ -581,8 +581,7 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
             reviewing ? (
               <>
                 <p className="muted small">
-                  Only accept if you re-keyed or reinstalled this server and checked this fingerprint on the server itself
-                  (<code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code>).
+                  Only accept it if you reinstalled this server or changed its keys, and you’ve checked this fingerprint on the server itself (<code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code>).
                 </p>
                 <Field label="Your password">
                   <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
@@ -591,9 +590,9 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
                   <button
                     className="danger"
                     disabled={!password}
-                    onClick={() => run(() => post(`/api/servers/${server.id}/host-key/accept`, { fingerprint: change.fingerprint, password }), 'New host key accepted.')}
+                    onClick={() => run(() => post(`/api/servers/${server.id}/host-key/accept`, { fingerprint: change.fingerprint, password }), 'New fingerprint accepted.')}
                   >
-                    Accept the new key
+                    Accept new fingerprint
                   </button>
                   <button onClick={() => setReviewing(false)}>Back</button>
                 </div>
@@ -601,35 +600,35 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
             ) : (
               <div className="row">
                 <button className="danger-outline" onClick={() => setReviewing(true)}>
-                  Review and accept…
+                  Review and accept
                 </button>
-                <button onClick={() => run(() => post(`/api/servers/${server.id}/host-key/dismiss`), 'Warning dismissed. The pinned key is kept.')}>Dismiss (keep the pinned key)</button>
+                <button onClick={() => run(() => post(`/api/servers/${server.id}/host-key/dismiss`), 'Warning dismissed. The saved fingerprint is unchanged.')}>Dismiss and keep the saved fingerprint</button>
               </div>
             )
           ) : (
-            <p className="muted small">Only the owner can accept a new key.</p>
+            <p className="muted small">Only the owner can accept a new fingerprint.</p>
           )}
         </div>
       )}
       {pin && (
         <p className="muted small">
-          Host key: <code>{pin.fingerprint}</code>
+          Server fingerprint: <code>{pin.fingerprint}</code>
           {pin.type ? ` (${pin.type})` : ''}
-          {pin.pinnedAt ? ` · trusted ${formatTime(pin.pinnedAt)}${pin.pinnedBy ? ` by ${pin.pinnedBy}` : ''}` : ''}{' '}
+          {pin.pinnedAt ? ` · trusted since ${formatTime(pin.pinnedAt)}${pin.pinnedBy ? ` by ${pin.pinnedBy}` : ''}` : ''}{' '}
           {isOwner && (
             <button
               className="link"
               onClick={async () => {
                 const ok = await confirm({
-                  title: `Forget the host key for ${server.name}`,
-                  message: 'You will be asked to verify it again on the next connection.',
-                  confirmLabel: 'Forget host key',
+                  title: `Remove the saved fingerprint for ${server.name}?`,
+                  message: 'You’ll be asked to verify the server’s fingerprint again the next time you connect.',
+                  confirmLabel: 'Remove fingerprint',
                   danger: true,
                 });
-                if (ok) await run(() => post(`/api/servers/${server.id}/forget-host-key`), 'Host key forgotten.');
+                if (ok) await run(() => post(`/api/servers/${server.id}/forget-host-key`), 'Saved fingerprint removed.');
               }}
             >
-              Forget
+              Remove fingerprint
             </button>
           )}
         </p>

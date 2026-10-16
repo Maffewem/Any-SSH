@@ -26,7 +26,7 @@ export function registerBackupRoutes(app: FastifyInstance, ctx: AppContext): voi
     if (!(await verifyPassword(user.password_hash, currentPassword))) {
       recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ ...auditBase, outcome: 'failure', details: { reason: 'bad_password' } });
-      throw badRequest('Password is incorrect.');
+      throw badRequest('The password isn’t correct.');
     }
     const { changed, changes } = settings.setBackup(body, user.id);
     audit.record({ ...auditBase, details: { changed, changes } });

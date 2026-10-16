@@ -34,7 +34,7 @@ export function verifyDatabaseFile(file: string, box?: SecretBox): VerifyReport 
       name: 'Schema',
       ok: hasTables && version >= 1 && version <= SCHEMA_VERSION,
       detail: !hasTables
-        ? 'This is not an Any-SSH database.'
+        ? 'This isn’t an Any-SSH database.'
         : version > SCHEMA_VERSION
           ? `Made by a newer Any-SSH (schema ${version}, this one understands ${SCHEMA_VERSION}). Update first.`
           : `Schema ${version} of ${SCHEMA_VERSION}`,

@@ -205,14 +205,14 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     const changing = current ? mode !== current.jump_mode || hostId !== current.jump_host_id : mode !== 'none';
     if (changing) {
       if (user.role !== 'admin' && (mode === 'fixed' || current?.jump_mode === 'fixed')) {
-        throw forbidden('Only an admin can choose or change a specific jump host.');
+        throw forbidden('Only an administrator can choose or change a specific jump host.');
       }
       if (mode === 'fixed') {
-        if (!hostId) throw badRequest('Choose a jump host.');
-        if (!db.prepare('SELECT 1 FROM jump_hosts WHERE id = ?').get(hostId)) throw badRequest('That jump host does not exist.');
+        if (!hostId) throw badRequest('Select a jump host.');
+        if (!db.prepare('SELECT 1 FROM jump_hosts WHERE id = ?').get(hostId)) throw badRequest('That jump host doesn’t exist.');
       }
       if (mode === 'auto' && !db.prepare('SELECT 1 FROM jump_hosts WHERE enabled = 1').get()) {
-        throw badRequest('No jump host has been set up yet. Ask an admin to add one.');
+        throw badRequest('No jump host has been set up yet. Ask an administrator to add one.');
       }
     }
     if (mode !== 'fixed') hostId = null;
@@ -223,19 +223,19 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     const found = getServerAccess(ctx, userId, serverId);
     // Same 404 whether the server is missing or just not shared with you.
     if (!found) throw notFound('Server not found');
-    if (!allowed.includes(found.access)) throw forbidden('You do not have permission to do that on this server.');
+    if (!allowed.includes(found.access)) throw forbidden('You don’t have permission to do that on this server.');
     return found;
   }
 
   function assertOwnKey(ownerId: string, keyId: string | null | undefined) {
     if (!keyId) return;
     const ok = db.prepare('SELECT 1 FROM ssh_keys WHERE id = ? AND owner_id = ?').get(keyId, ownerId);
-    if (!ok) throw badRequest('Choose one of your own SSH keys.');
+    if (!ok) throw badRequest('Select one of your own SSH keys.');
   }
 
   function validateCredentials(authMethod: ServerRow['auth_method'], keyId: string | null, hasPassword: boolean) {
-    if (authMethod === 'key' && !keyId) throw badRequest('Choose an SSH key for key authentication.');
-    if (authMethod === 'password' && !hasPassword) throw badRequest('Enter the password to store.');
+    if (authMethod === 'key' && !keyId) throw badRequest('Select an SSH key.');
+    if (authMethod === 'password' && !hasPassword) throw badRequest('Enter the password to save.');
   }
 
   app.get('/api/servers', async (req) => {
@@ -315,7 +315,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       if (endpointChanged) clearHostKey(id);
     })();
     // A new route is a new vantage point: terminals already open keep the old path only until closed.
-    if (jumpChanged) terminals.closeForServer(id, 'This server’s jump host setting was changed. Reconnect to use it.');
+    if (jumpChanged) terminals.closeForServer(id, 'This server’s jump host setting was changed. Reconnect to apply it.');
     const { password: _omit, ...logged } = body;
     audit.record({
       actorId: user.id, actorUsername: user.username, action: 'server.update', targetType: 'server', targetId: id,
@@ -372,11 +372,11 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     const auditBase = { actorId: user.id, actorUsername: user.username, action: 'server.host_key_accept', targetType: 'server', targetId: id, ip: clientIp(req) };
     // Accept exactly the key that was shown, never whatever turned up since.
     if (!server.host_key_pending || server.host_key_pending !== body.fingerprint) {
-      throw new HttpError(409, 'That host key change is no longer pending. Reload and review it again.', 'conflict');
+      throw new HttpError(409, 'That fingerprint change is no longer pending. Reload the page and review it again.', 'conflict');
     }
     if (!(await verifyPassword(user.password_hash, body.password))) {
       audit.record({ ...auditBase, outcome: 'failure', details: { reason: 'bad_password', presented: body.fingerprint } });
-      throw badRequest('Password is incorrect.');
+      throw badRequest('The password isn’t correct.');
     }
     const now = Date.now();
     db.prepare(
@@ -388,7 +388,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       ...auditBase,
       details: { host: server.host, port: server.port, previous: server.host_key_fingerprint, fingerprint: body.fingerprint, keyType: server.host_key_pending_type },
     });
-    notify(ctx, req.log, user, `you accepted a new host key for "${server.name}" (${server.host}:${server.port}): ${body.fingerprint}`);
+    notify(ctx, req.log, user, `you accepted a new fingerprint for "${server.name}" (${server.host}:${server.port}): ${body.fingerprint}`);
     return { server: view(getServerAccess(ctx, user.id, id)!) };
   });
 
@@ -480,7 +480,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     const target = db.prepare("SELECT * FROM users WHERE id = ? AND status = 'active'").get(userId) as UserRow | undefined;
     if (!target) throw notFound('User not found');
     if (target.id === server.owner_id) throw badRequest('The owner already has full access.');
-    if (target.id === user.id) throw badRequest('You cannot change your own access.');
+    if (target.id === user.id) throw badRequest('You can’t change your own access.');
     requireCanShare(grant);
     const existing = db.prepare('SELECT * FROM server_shares WHERE server_id = ? AND user_id = ?').get(id, userId) as
       | ServerShareRow
@@ -494,7 +494,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       if (permission === 'manage' || existing?.permission === 'manage') {
         throw forbidden('Only the owner can grant or change manage access.');
       }
-      if (body.canReshare) throw forbidden('Only the owner can allow re-sharing.');
+      if (body.canReshare) throw forbidden('Only the owner can allow sharing with others.');
       if (credentials === 'owner' && grant.credentials === 'own') {
         throw forbidden('You connect with your own credentials, so anyone you share with must bring theirs too.');
       }
@@ -529,7 +529,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
 
     const leaving = userId === user.id;
     const canRevoke = found.access === 'owner' || (found.canShare && share.permission === 'use');
-    if (!leaving && !canRevoke) throw forbidden('You cannot remove that person’s access.');
+    if (!leaving && !canRevoke) throw forbidden('You can’t remove that person’s access.');
 
     db.prepare('DELETE FROM server_shares WHERE server_id = ? AND user_id = ?').run(id, userId);
     terminals.closeForUserServer(userId, id, 'Your access to this server was removed.');
@@ -555,7 +555,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       return { ticket: terminals.issueTicket({ userId: user.id, serverId: server.id, sessionIdHash: session.id_hash, access, credential: { type: 'saved' }, username: server.username, resume: body.resume }) };
     }
     if (terminals.countForUser(user.id) >= ctx.settings.terminalLimit(user.role)) {
-      throw new HttpError(429, 'You have reached the maximum number of open terminals for your account. Close one to open another.', 'too_many_terminals');
+      throw new HttpError(429, 'You’ve reached the maximum number of open terminals for your account. Close one to open another.', 'too_many_terminals');
     }
 
     let credential: ConnectCredential;
@@ -566,9 +566,9 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       }
       // The owner's credentials belong to the owner's login on that server.
       if (body.username && body.username !== server.username) {
-        throw badRequest('Choose your own credentials to log in as a different user.');
+        throw badRequest('Choose your own credentials to connect as a different user.');
       }
-      if (server.auth_method === 'key' && !server.key_id) throw badRequest('This server has no SSH key attached.');
+      if (server.auth_method === 'key' && !server.key_id) throw badRequest('No SSH key is selected for this server.');
       credential = choice;
     } else if (choice.type === 'key') {
       assertOwnKey(user.id, choice.keyId);

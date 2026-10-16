@@ -171,13 +171,13 @@ export function App() {
 
   const nav: { id: Page; label: string; admin?: boolean }[] = [
     { id: 'servers', label: 'Servers' },
-    { id: 'keys', label: 'Keys' },
+    { id: 'keys', label: 'SSH keys' },
     { id: 'users', label: 'Users', admin: true },
-    { id: 'audit', label: 'Audit', admin: true },
-    { id: 'status', label: 'Status', admin: true },
+    { id: 'audit', label: 'Activity log', admin: true },
+    { id: 'status', label: 'System status', admin: true },
     { id: 'hostkeys', label: 'Host keys', admin: true },
     { id: 'settings', label: 'Settings', admin: true },
-    { id: 'account', label: 'Account' },
+    { id: 'account', label: 'My account' },
   ];
   const showingTerminal = activeTab !== null;
 
@@ -198,7 +198,7 @@ export function App() {
               </a>
             ))}
         </nav>
-        <button className="ghost signout" onClick={lockNow} title="Lock this session; unlock with your password">
+        <button className="ghost signout" onClick={lockNow} title="Lock this session. Enter your password to unlock it.">
           Lock
         </button>
         <button className="ghost signout" onClick={logout}>
@@ -211,7 +211,7 @@ export function App() {
       {terminals.length > 0 && (
         <div className="terminal-tabs" role="tablist">
           {showingTerminal && (
-            <button className="ghost back" onClick={() => setActiveTab(null)} title="Back to the app">
+            <button className="ghost back" onClick={() => setActiveTab(null)} title="Back to Any-SSH">
               ← {page === 'servers' ? 'Servers' : 'Back'}
             </button>
           )}
@@ -226,7 +226,7 @@ export function App() {
                   ↻
                 </button>
               )}
-              <button className="ghost" title="Close" onClick={() => closeTab(t.tabId)}>
+              <button className="ghost" title="Close tab" onClick={() => closeTab(t.tabId)}>
                 ✕
               </button>
             </div>

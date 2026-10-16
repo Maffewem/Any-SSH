@@ -69,7 +69,12 @@ describe('Update now API', () => {
       expect((await client.post('/api/admin/version/update-now')).status).toBe(403);
 
       b.ctx.updateRequests.heartbeat();
-      const known = (updateAvailable: boolean | null) => ((b.ctx.updates as any).status = { checkedAt: Date.now(), latest: null, updateAvailable, error: null });
+      // "Update now" forces a registry check, so replace it: the test must not depend on the network.
+      const known = (updateAvailable: boolean | null) => {
+        const status = { checkedAt: Date.now(), latest: null, updateAvailable, error: null };
+        (b.ctx.updates as any).status = status;
+        (b.ctx.updates as any).check = async () => status;
+      };
       known(false);
       // Checks are off in this test, so the server can't tell; with a check run it must refuse unless newer is known.
       (b.ctx.config as any).updateCheck = true;

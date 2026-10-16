@@ -25,8 +25,8 @@ export function UpdateBanner() {
   const mins = Math.max(0, Math.ceil((at - Date.now()) / 60_000));
   return (
     <div className="update-banner" role="status">
-      Any-SSH is about to update and restart{mins > 0 ? ` in about ${mins} minute${mins === 1 ? '' : 's'}` : ' now'}. Open terminals disconnect briefly and
-      reconnect on their own; finish anything important first.
+      Any-SSH will update and restart{mins > 0 ? ` in about ${mins} minute${mins === 1 ? '' : 's'}` : ' now'}. Open terminals will disconnect briefly and
+      reconnect automatically. Finish any important work first.
     </div>
   );
 }

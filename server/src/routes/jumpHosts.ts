@@ -113,7 +113,7 @@ export function registerJumpHostRoutes(app: FastifyInstance, ctx: AppContext): v
     );
     forgetLatency(id);
     if (!enabled || endpointChanged || (body.username && body.username !== j.username)) {
-      terminals.closeForJumpHost(id, 'The jump host this terminal used was changed or disabled.');
+      terminals.closeForJumpHost(id, 'The jump host this terminal used was changed or turned off.');
     }
     audit.record({ ...base, action: 'jump_host.update', targetId: id, details: { ...body, hostKeyCleared: endpointChanged && !!j.host_key_fingerprint } });
     return { jumpHost: view(find(id)) };
@@ -148,12 +148,12 @@ export function registerJumpHostRoutes(app: FastifyInstance, ctx: AppContext): v
     const { id } = parse(idParam, req.params);
     const { fingerprint } = parse(pinBody, req.body);
     const j = find(id);
-    if (j.host_key_fingerprint) throw badRequest('A host key is already verified. Remove it first to verify a different one.');
+    if (j.host_key_fingerprint) throw badRequest('A fingerprint is already verified. Remove it first to verify a different one.');
     const probe = await testJumpHost(ctx, j);
-    if (!probe.fingerprint) throw badRequest(probe.error ?? 'Could not reach the jump host.');
+    if (!probe.fingerprint) throw badRequest(probe.error ?? 'Couldn’t connect to the jump host.');
     if (probe.fingerprint !== fingerprint) {
       audit.record({ ...base, action: 'jump_host.pin', targetId: id, outcome: 'failure', details: { expected: fingerprint, presented: probe.fingerprint } });
-      throw badRequest('The jump host now presents a different host key from the one you checked. Nothing was saved.');
+      throw badRequest('The jump host now presents a different fingerprint from the one you checked. Nothing was saved.');
     }
     db.prepare('UPDATE jump_hosts SET host_key_fingerprint = ?, updated_at = ? WHERE id = ? AND host_key_fingerprint IS NULL').run(fingerprint, Date.now(), id);
     audit.record({ ...base, action: 'jump_host.pin', targetId: id, details: { name: j.name, fingerprint } });
@@ -165,7 +165,7 @@ export function registerJumpHostRoutes(app: FastifyInstance, ctx: AppContext): v
     const { id } = parse(idParam, req.params);
     const j = find(id);
     db.prepare('UPDATE jump_hosts SET host_key_fingerprint = NULL, updated_at = ? WHERE id = ?').run(Date.now(), id);
-    terminals.closeForJumpHost(id, 'The jump host’s pinned host key was cleared.');
+    terminals.closeForJumpHost(id, 'The jump host’s saved fingerprint was removed.');
     audit.record({ ...base, action: 'jump_host.host_key_forget', targetId: id, details: { name: j.name, previous: j.host_key_fingerprint } });
     return { jumpHost: view(find(id)) };
   });

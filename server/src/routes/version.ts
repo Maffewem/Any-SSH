@@ -55,14 +55,14 @@ export function registerVersionRoutes(app: FastifyInstance, ctx: AppContext): vo
   app.post('/api/admin/version/update-now', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => {
     const { user } = requireAdmin(req);
     if (!ctx.updateRequests.agentActive()) {
-      throw badRequest('The update agent is not running on the server. Run “sudo any-ssh web-update on” on the server once, then try again.');
+      throw badRequest('The update agent isn’t running on the server. Run “sudo any-ssh web-update on” on the server once, then try again.');
     }
     // Only when a newer version is known. Re-checks the registry first. With update checks
     // turned off the server can't tell, so the host agent's own check ("update-if-newer") is the guard.
     if (config.updateCheck) {
       const status = await updates.check({ force: true });
       if (status.updateAvailable === false) throw badRequest('This server is already up to date.');
-      if (status.updateAvailable !== true) throw badRequest('Couldn’t confirm that a newer version is available. Use “Check for updates” first.');
+      if (status.updateAvailable !== true) throw badRequest('Couldn’t confirm that a newer version is available. Select “Check for updates” first.');
     }
     const request = ctx.updateRequests.create(user.username, 'manual');
     if (!request) throw badRequest('An update is already scheduled.');
