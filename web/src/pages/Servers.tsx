@@ -40,17 +40,36 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
       </div>
       {error && <p className="error">{error}</p>}
       {all.length > 0 && (
-        <input
-          className="search"
-          type="search"
-          placeholder="Search by name, host, user, notes or tag"
-          aria-label="Search servers"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
+        <div className="search-wrap" role="search">
+          <svg className="search-icon" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <circle cx="8.5" cy="8.5" r="5.5" />
+            <path d="M13 13l4 4" />
+          </svg>
+          <input
+            className="search"
+            type="text"
+            inputMode="search"
+            enterKeyHint="search"
+            placeholder="Search servers"
+            title="Matches name, host, user, notes, owner and tags"
+            aria-label="Search servers"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && setFilter('')}
+          />
+          {filter && (
+            <button type="button" className="search-clear" aria-label="Clear search" onClick={() => setFilter('')}>
+              ×
+            </button>
+          )}
+        </div>
       )}
       {knownTags.length > 0 && (
         <div className="tag-filter" role="group" aria-label="Filter by tag">
+          <span className="tag-filter-label muted small">Filter by tag</span>
           {knownTags.map((t) => (
             <button
               key={t}
@@ -63,10 +82,18 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
           ))}
         </div>
       )}
+      {all.length > 0 && (filter || activeTag) && servers.length > 0 && (
+        <p className="muted small result-count" role="status">
+          Showing {servers.length} of {all.length} {all.length === 1 ? 'server' : 'servers'}
+          {activeTag ? ` tagged “${activeTag}”` : ''}.{' '}
+          <button className="link" onClick={() => (setFilter(''), setActiveTag(null))}>Clear filters</button>
+        </p>
+      )}
       {all.length > 0 && servers.length === 0 && (
-        <div className="empty card">
-          <p>No servers match.{' '}
-            <button className="ghost" onClick={() => (setFilter(''), setActiveTag(null))}>Clear search</button>
+        <div className="empty card" role="status">
+          <p>
+            No servers match{filter ? ` “${filter}”` : ''}{activeTag ? ` with the tag “${activeTag}”` : ''}.{' '}
+            <button className="link" onClick={() => (setFilter(''), setActiveTag(null))}>Clear filters</button>
           </p>
         </div>
       )}
