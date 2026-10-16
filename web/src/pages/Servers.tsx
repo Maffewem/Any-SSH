@@ -290,7 +290,7 @@ function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: 
         ) : (
           <p className="muted">Only the owner can change connection details and credentials.</p>
         )}
-        <Field label="Tags" hint="Separate with commas, e.g. prod, web, london. Up to 10. Anyone the server is shared with sees them.">
+        <Field label="Tags" hint="Comma-separated, up to 10.">
           <input value={tags} onChange={(e) => setTags(e.target.value)} autoCapitalize="none" maxLength={400} />
         </Field>
         {knownTags.filter((t) => !parseTags(tags).some((x) => x.toLowerCase() === t.toLowerCase())).length > 0 && (
@@ -374,8 +374,7 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
   return (
     <Modal title={`Share ${server.name}`} onClose={onClose}>
       <p className="muted small">
-        <strong>Use</strong> lets someone connect; <strong>Manage</strong> also lets them rename it. Choose whether they
-        connect with this server’s saved credentials (they never see the key or password) or must supply their own.
+        <strong>Use</strong> lets someone connect; <strong>Manage</strong> also lets them edit it. Shared credentials are never shown to them.
       </p>
       {error && <p className="error">{error}</p>}
       <ul className="list">

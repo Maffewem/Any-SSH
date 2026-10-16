@@ -14,22 +14,17 @@ export function JumpHostsSection() {
         <button onClick={() => setAdding((a) => !a)}>{adding ? 'Cancel' : 'Add a jump host'}</button>
       </div>
       <p className="muted small">
-        A jump host (also called a bastion) is a gateway that servers on a private network are reached through, so only the gateway needs to be
-        exposed to the internet. You can add as many as you need, for example one per site or network.
+        A jump host (bastion) is a gateway for reaching servers on a private network.
       </p>
       <ul className="muted small">
         <li>
-          <strong>Privacy:</strong> a jump host relays encrypted traffic only. Each person’s sign-in to the target server is end to end, so the
-          jump host never sees their key, password or keystrokes.
+          <strong>Privacy:</strong> a jump host only relays encrypted traffic; it never sees keys, passwords or keystrokes.
         </li>
         <li>
-          <strong>Choosing:</strong> each server is set to use no jump host, a specific jump host, or the closest one. “Closest” picks the
-          reachable jump host with the lowest connection time from this server and moves on to the next if it fails. A specific jump host never falls
-          back to another route.
+          <strong>Choosing:</strong> each server uses no jump host, a specific one, or the closest. A specific jump host never falls back to another route.
         </li>
         <li>
-          <strong>Trust:</strong> Any-SSH signs in to a jump host with its own key (the public half is shown below). A jump host cannot be used
-          until you have verified its host key.
+          <strong>Trust:</strong> a jump host can’t be used until you have verified its host key.
         </li>
       </ul>
       {error && <p className="error">{error}</p>}
