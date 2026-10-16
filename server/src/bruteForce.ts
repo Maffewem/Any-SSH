@@ -8,7 +8,7 @@ import type { Settings } from './settings.js';
 import type { AppContext, UserRow } from './types.js';
 
 /** What was being attempted. Every kind counts towards the per-IP limit; those with a user also towards the account's. */
-export type FailureKind = 'login' | 'mfa' | 'unlock' | 'reset' | 'challenge' | 'reauth' | 'setup';
+export type FailureKind = 'login' | 'mfa' | 'unlock' | 'reset' | 'challenge' | 'reauth' | 'setup' | 'captcha' | 'register';
 
 export interface FailureResult {
   accountLockedUntil: number | null;

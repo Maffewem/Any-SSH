@@ -110,6 +110,41 @@ docker compose logs app | grep -A2 "first-run"   # one-time setup token
 
 Update with `docker compose pull && docker compose up -d`.
 
+## Letting people create their own accounts
+
+By default only admins create accounts. To let people register themselves, go to **Settings → Email** and set up SMTP
+(people must confirm their email address, so registration can't be turned on without it), then choose a mode under
+**Settings → Access → Account registration**:
+
+- **Invitation only** (default): the Create account page is hidden.
+- **Open registration with administrator approval**: anyone can request an account. After they confirm their email, admins
+  are emailed and approve or decline them on the **Users** page. This is the safer way to open sign-ups.
+- **Open registration**: anyone who confirms their email address gets an account.
+
+New accounts are standard users with no servers; they only see servers that someone shares with them. Sign-ups that
+never confirm their email are deleted after 7 days.
+
+### Cloudflare browser check (Turnstile)
+
+To keep bots away from sign-up, password reset and sign-in, add a free Cloudflare Turnstile check:
+
+1. In the Cloudflare dashboard open **Turnstile → Add widget**, add your Any-SSH hostname (for example `ssh.example.com`)
+   and choose the managed widget. You don't need to use Cloudflare for your DNS.
+2. Copy the **site key** and **secret key** into **Settings → Access → Browser check**, tick where the check is required
+   and save. Test it from a private window before relying on it.
+
+Notes:
+
+- This is **separate from proxying your domain through Cloudflare** (the orange cloud). Turnstile works with Caddy
+  talking directly to the internet. If you do proxy through Cloudflare, see the next point.
+- The server checks every token with Cloudflare, so it needs outbound HTTPS to `challenges.cloudflare.com`. If that is
+  blocked, the check fails closed and the protected forms stop working.
+- No Caddy change is needed. The app allows `https://challenges.cloudflare.com` in its Content-Security-Policy only while
+  the check is configured; don't add your own CSP header in Caddy that would block it.
+- Behind Cloudflare's proxy the client address Caddy sees is Cloudflare's, so set up `trusted_proxies` for Cloudflare's
+  ranges and use `CF-Connecting-IP`, otherwise brute-force lockouts and the IP sent to Turnstile will be Cloudflare's address.
+- If a wrong key locks everyone out of sign-in, run `sudo any-ssh browser-check-off` on the server.
+
 ## Where the master key lives
 
 The master key decrypts every stored SSH key and password. Treat it like a root credential.

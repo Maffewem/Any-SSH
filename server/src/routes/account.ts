@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { TOKEN_TTL_MS, consumeToken, findToken, issueToken, notify, tokenUrl } from '../accountTokens.js';
 import { assertIpAllowed, recordAuthFailure, recordReauthFailure } from '../bruteForce.js';
 import { HttpError, badRequest, clientIp, parse, requireUser } from '../http.js';
+import { requireHuman } from '../turnstile.js';
 import { emails } from '../mail.js';
 import { checkPasswordPolicy, hashPassword, verifyPassword } from '../passwords.js';
 import { publicUser, type AppContext, type UserRow } from '../types.js';
@@ -22,8 +23,9 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
   // Always answers the same way, whether or not the account exists or has an email address.
 
   app.post('/api/auth/forgot', strict, async (req) => {
-    const { identifier } = parse(z.object({ identifier: z.string().trim().min(1).max(254) }), req.body);
+    const { identifier, captchaToken } = parse(z.object({ identifier: z.string().trim().min(1).max(254), captchaToken: z.string().max(2048).optional() }), req.body);
     assertIpAllowed(ctx, clientIp(req));
+    await requireHuman(ctx, req, 'reset', captchaToken);
     const user = db
       .prepare("SELECT * FROM users WHERE (username = ? OR email = ? COLLATE NOCASE) AND status = 'active'")
       .get(identifier, identifier) as UserRow | undefined;

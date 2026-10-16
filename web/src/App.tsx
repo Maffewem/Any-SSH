@@ -5,7 +5,7 @@ import { LockScreen, useIdleLock } from './lock';
 import { AccountPage } from './pages/Account';
 import { AdminUsersPage, AuditPage, HostKeysPage } from './pages/Admin';
 import { SettingsPage } from './pages/Settings';
-import { ForcePasswordChangePage, IpChallengePage, LoginPage, SetupPage, TokenPage } from './pages/Auth';
+import { ForcePasswordChangePage, IpChallengePage, LoginPage, SetupPage, TokenPage, VerifyEmailPage } from './pages/Auth';
 import { HealthPage } from './pages/Health';
 import { KeysPage } from './pages/Keys';
 import { ServersPage } from './pages/Servers';
@@ -31,6 +31,12 @@ function linkTokenFromHash(): string | null {
   return m ? m[2]! : null;
 }
 
+/** Token from the email confirmation link (#/verify?token=…), if this is one. */
+function verifyTokenFromHash(): string | null {
+  const m = /^#\/verify\?token=([A-Za-z0-9_-]{20,100})$/.exec(location.hash);
+  return m ? m[1]! : null;
+}
+
 function pageFromHash(): Page {
   const h = location.hash.replace(/^#\/?/, '');
   return (['servers', 'keys', 'account', 'users', 'audit', 'hostkeys', 'status', 'settings'] as const).find((p) => p === h) ?? 'servers';
@@ -42,6 +48,7 @@ export function App() {
   const [terminals, setTerminals] = useState<OpenTerminal[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [linkToken, setLinkToken] = useState<string | null>(linkTokenFromHash);
+  const [verifyToken, setVerifyToken] = useState<string | null>(verifyTokenFromHash);
   /** Locked while the app is open: the app stays mounted underneath, hidden. */
   const [locked, setLocked] = useState(false);
 
@@ -73,6 +80,7 @@ export function App() {
     setLockedHandler(() => setLocked(true));
     const onHash = () => {
       setLinkToken(linkTokenFromHash());
+      setVerifyToken(verifyTokenFromHash());
       setPage(pageFromHash());
       setActiveTab(null);
     };
@@ -94,6 +102,18 @@ export function App() {
     setLocked(true);
   };
 
+  if (verifyToken) {
+    return (
+      <VerifyEmailPage
+        token={verifyToken}
+        onDone={() => {
+          history.replaceState(null, '', '/');
+          setVerifyToken(null);
+          void refresh();
+        }}
+      />
+    );
+  }
   if (linkToken) {
     return (
       <TokenPage

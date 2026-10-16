@@ -35,6 +35,8 @@ Usage: any-ssh <command>
   start         Start it
   stop          Stop it
   restart       Restart it (including the HTTPS proxy, which retries the certificate)
+  browser-check-off
+                Turn off the Cloudflare browser check and remove its keys (if it locks everyone out of signing in)
   doctor        Check the domain, DNS and HTTPS certificate, and explain what's wrong
   setup-token   Show the one-time token for creating the first admin
   version       Show the running version
@@ -428,6 +430,12 @@ case "${1:-help}" in
     ;;
   restore) need_root restore; restore_backup "${2:-}" "${3:-}" ;;
   status) dc ps ;;
+  browser-check-off)
+    need_root browser-check-off
+    dc exec -T app node dist/cli/browser-check-off.js
+    dc restart app
+    wait_healthy
+    ;;
   doctor) doctor ;;
   check-dns) check_dns "${2:-$(domain)}" ;;
   wait-cert)

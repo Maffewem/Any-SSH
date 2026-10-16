@@ -104,6 +104,45 @@ export const emails = {
         footer,
     };
   },
+  verifyEmail(p: { to: string; displayName: string; url: string; hours: number }): MailMessage {
+    return {
+      to: p.to,
+      subject: 'Confirm your email address for Any-SSH',
+      text:
+        `Hi ${p.displayName},\n\nThanks for creating an Any-SSH account. To confirm your email address, open this link. ` +
+        `It can be used once and expires in ${p.hours} hours:\n${p.url}\n\n` +
+        'If you didn’t create an account, you can ignore this email. No account will be activated.' +
+        footer,
+    };
+  },
+  registrationExists(p: { to: string }): MailMessage {
+    return {
+      to: p.to,
+      subject: 'You already have an Any-SSH account',
+      text:
+        'Hi,\n\nSomeone tried to create an Any-SSH account with this email address, but an account already exists. ' +
+        'If it was you, sign in instead, or use “Forgot your password?” on the sign-in page to reset your password.\n\n' +
+        'If it wasn’t you, you can ignore this email. Nothing has changed.' +
+        footer,
+    };
+  },
+  approvalNeeded(p: { to: string; displayName: string; applicant: string; email: string; url: string }): MailMessage {
+    return {
+      to: p.to,
+      subject: 'Any-SSH: a new account is waiting for approval',
+      text:
+        `Hi ${p.displayName},\n\n${p.applicant} (${p.email}) confirmed their email address and is waiting for approval to use Any-SSH.\n\n` +
+        `To review the request, sign in and open Users:\n${p.url}` +
+        footer,
+    };
+  },
+  accountApproved(p: { to: string; displayName: string; url: string }): MailMessage {
+    return {
+      to: p.to,
+      subject: 'Your Any-SSH account is ready',
+      text: `Hi ${p.displayName},\n\nAn administrator approved your Any-SSH account. You can sign in now:\n${p.url}` + footer,
+    };
+  },
   ipChallenge(p: { to: string; displayName: string; code: string; ip: string; minutes: number }): MailMessage {
     return {
       to: p.to,

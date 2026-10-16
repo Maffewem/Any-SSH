@@ -19,6 +19,7 @@ import { ConfigurableMailer, type Mailer } from './mail.js';
 import { countStale } from './rotate.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerAccountLifecycleRoutes } from './routes/accountLifecycle.js';
+import { registerRegistrationRoutes } from './routes/registration.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerJumpHostRoutes } from './routes/jumpHosts.js';
 import { registerKeyRoutes } from './routes/keys.js';
@@ -31,11 +32,19 @@ import { Settings } from './settings.js';
 import { TerminalRegistry } from './ssh/registry.js';
 import { registerTerminalRoute } from './ssh/terminal.js';
 import type { AppContext } from './types.js';
+import { Turnstile, TURNSTILE_ORIGIN } from './turnstile.js';
 import { UpdateChecker } from './updates.js';
 import { UpdateRequests } from './updateRequests.js';
 import { updateNoticeText } from './routes/version.js';
 import { registerVersionRoutes } from './routes/version.js';
 import { registerHealthRoutes } from './routes/health.js';
+
+/** Registrations that never confirmed their email address are removed after this long. */
+const UNVERIFIED_TTL_MS = 7 * 24 * 3600_000;
+
+function purgeUnverifiedAccounts(db: DB): void {
+  db.prepare("DELETE FROM users WHERE registration_state = 'unverified' AND created_at < ?").run(Date.now() - UNVERIFIED_TTL_MS);
+}
 
 /** Header the web client sends on every state-changing request (see docs/SECURITY.md, CSRF). */
 export const CSRF_HEADER = 'x-any-ssh';
@@ -47,7 +56,7 @@ export interface BuiltApp {
   setup: { token: string | null };
 }
 
-export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean; mailer?: Mailer; updates?: ConstructorParameters<typeof UpdateChecker>[2] } = {}): Promise<BuiltApp> {
+export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean; mailer?: Mailer; updates?: ConstructorParameters<typeof UpdateChecker>[2]; fetch?: typeof fetch } = {}): Promise<BuiltApp> {
   const db = opts.db ?? openDatabase(config.dbPath);
   const box = new SecretBox(config.masterKey, config.previousMasterKeys);
   const settings = new Settings(db, box, config);
@@ -76,6 +85,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   const audit = new AuditLog(db);
   const ctx: AppContext = {
     config, db, box, audit, bruteForce: new BruteForce(db, settings, audit), sessions, terminals, mailer, settings,
+    turnstile: new Turnstile(opts.fetch),
     updates: new UpdateChecker(config, app.log, opts.updates),
     updateRequests: new UpdateRequests(db),
     backups: new BackupService({ db, settings, box, audit, mailer, config, log: app.log }),
@@ -89,15 +99,18 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
 
   const wsOrigins = config.allowedOrigins.map((o) => o.replace(/^http/, 'ws'));
+  // Cloudflare's challenge script and frame are allowed only while the browser check is configured.
+  const turnstileSource = () => (ctx.settings.turnstileConfigured ? TURNSTILE_ORIGIN : "'self'");
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
+        scriptSrc: ["'self'", turnstileSource],
+        frameSrc: ["'self'", turnstileSource],
         // xterm.js injects a <style> element for its renderer.
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:'],
-        connectSrc: ["'self'", ...wsOrigins],
+        connectSrc: ["'self'", ...wsOrigins, turnstileSource],
         workerSrc: ["'self'"],
         manifestSrc: ["'self'"],
         frameAncestors: ["'none'"],
@@ -148,6 +161,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   app.get('/api/health', async () => ({ ok: true }));
   registerAuthRoutes(app, ctx);
   registerAccountRoutes(app, ctx);
+  registerRegistrationRoutes(app, ctx);
   registerAccountLifecycleRoutes(app, ctx);
   registerTrustedIpRoutes(app, ctx);
   registerUserRoutes(app, ctx, setup);
@@ -179,6 +193,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   const purge = setInterval(() => {
     sessions.purgeExpired();
     ctx.bruteForce.purge();
+    purgeUnverifiedAccounts(db);
   }, 10 * 60_000);
   purge.unref();
   // Warn people with open terminals as soon as an update is requested (the host starts it after the warning period).

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { formatTime, get, patch, post, type AuditEntry, type HostKeyRow, type User } from '../api';
+import { errorMessage, formatTime, get, patch, post, type AuditEntry, type HostKeyRow, type User } from '../api';
 import { Field, Form, Modal, SecretOnce, useAsync, useConfirm, useToast } from '../ui';
 import { DeleteAccountForm } from './DeleteAccount';
 
@@ -14,7 +14,9 @@ const EVENT_LABELS: Record<string, string> = {
   'admin.settings_reset': 'Settings reset',
   'admin.update_cancelled': 'Update canceled',
   'admin.update_requested': 'Update requested',
+  'admin.user_approve': 'Registration approved',
   'admin.user_create': 'User added',
+  'admin.user_reject': 'Registration declined',
   'admin.user_delete': 'User deleted',
   'admin.user_reset_mfa': '2-step verification reset',
   'admin.user_reset_password': 'Password reset',
@@ -22,6 +24,8 @@ const EVENT_LABELS: Record<string, string> = {
   'admin.user_sign_out': 'User signed out of all devices',
   'admin.user_unlock': 'User unlocked',
   'admin.user_update': 'User updated',
+  'auth.browser_check': 'Browser check failed',
+  'auth.email_verified': 'Email address confirmed',
   'auth.ip_challenge': 'IP address verification',
   'auth.lock': 'Session locked',
   'auth.lockout': 'Account locked after failed sign-ins',
@@ -30,6 +34,7 @@ const EVENT_LABELS: Record<string, string> = {
   'auth.mfa': '2-step verification',
   'auth.password_ok': 'Password accepted',
   'auth.password_reset_request': 'Password reset requested',
+  'auth.register': 'Account created',
   'auth.session_revoke': 'Device signed out',
   'auth.sign_out_everywhere': 'Signed out of all devices',
   'auth.unlock': 'Session unlocked',
@@ -131,7 +136,11 @@ export function AdminUsersPage({ me }: { me: User }) {
                 </td>
                 <td>{u.role === 'admin' ? 'Admin' : 'User'}</td>
                 <td>
-                  {u.status === 'disabled' ? (
+                  {u.registrationState === 'pending_approval' ? (
+                    <span className="badge warn">Awaiting approval</span>
+                  ) : u.registrationState === 'unverified' ? (
+                    <span className="badge">Email not confirmed</span>
+                  ) : u.status === 'disabled' ? (
                     <span className="badge warn">Disabled</span>
                   ) : u.locked ? (
                     <span className="badge warn">Locked</span>
@@ -241,6 +250,53 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+
+  if (user.registrationState) {
+    const waiting = user.registrationState === 'pending_approval';
+    return (
+      <Modal title={user.displayName} onClose={onClose}>
+        <p>
+          {user.displayName} (<span className="mono">{user.email}</span>) created this account themselves.{' '}
+          {waiting
+            ? 'They have confirmed their email address and are waiting for you to approve them. Approved accounts get standard user access and no servers.'
+            : 'They haven’t confirmed their email address yet. The account is removed automatically after 7 days if they don’t.'}
+        </p>
+        {error && <p className="error">{error}</p>}
+        <div className="row wrap">
+          {waiting && (
+            <button
+              className="primary"
+              onClick={async () => {
+                try {
+                  await post(`/api/admin/users/${user.id}/approve`);
+                  toast.success(`${user.displayName} can now sign in.`);
+                  onClose();
+                } catch (e) {
+                  setError(errorMessage(e));
+                }
+              }}
+            >
+              Approve
+            </button>
+          )}
+          <button
+            className="danger-outline"
+            onClick={async () => {
+              if (!(await confirm({ title: `Decline ${user.displayName}?`, message: 'The account is deleted. They can register again.', confirmLabel: 'Decline', danger: true }))) return;
+              try {
+                await post(`/api/admin/users/${user.id}/reject`);
+                onClose();
+              } catch (e) {
+                setError(errorMessage(e));
+              }
+            }}
+          >
+            {waiting ? 'Decline' : 'Delete'}
+          </button>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal title={`@${user.username}`} onClose={onClose}>

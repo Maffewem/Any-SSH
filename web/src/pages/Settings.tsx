@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { del, errorMessage, formatTime, get, post, put, type SettingsView } from '../api';
+import { del, errorMessage, formatTime, get, post, put, type RegistrationMode, type SettingsView } from '../api';
 import { Field, Form, SubTabs, useAsync, useConfirm, useRememberedTab, useToast } from '../ui';
 import { BackupSection } from './Backups';
 import { JumpHostsSection } from './JumpHosts';
@@ -62,7 +62,13 @@ export function SettingsPage() {
               <SecuritySection key={`security-${resets}`} view={current} onSaved={onSaved} />
             </>
           )}
-          {tab === 'access' && <JumpHostsSection />}
+          {tab === 'access' && (
+            <>
+              <RegistrationSection key={`registration-${resets}`} view={current} onSaved={onSaved} />
+              <BrowserCheckSection key={`turnstile-${resets}`} view={current} onSaved={onSaved} />
+              <JumpHostsSection />
+            </>
+          )}
           {tab === 'limits' && <LimitsSection key={`limits-${resets}`} view={current} onSaved={onSaved} />}
           {tab === 'backups' && <BackupSection key={`backup-${resets}`} view={current} onSaved={onSaved} />}
           {tab === 'updates' && (
@@ -80,13 +86,148 @@ export function SettingsPage() {
 
 const TABS = [
   { id: 'security', label: 'Security', blurb: 'Session timeouts and protection against repeated failed sign-in attempts.' },
-  { id: 'access', label: 'Access', blurb: 'Jump hosts that servers can connect through.' },
+  { id: 'access', label: 'Access', blurb: 'Who can create an account, the browser check on public forms, and the jump hosts that servers can connect through.' },
   { id: 'limits', label: 'Limits', blurb: 'Usage limits for each type of account.' },
   { id: 'backups', label: 'Backups', blurb: 'Where Any-SSH backups are stored, how often they run and how they’re encrypted.' },
   { id: 'updates', label: 'Updates', blurb: 'The installed version, update checks and the maintenance window.' },
   { id: 'notifications', label: 'Email', blurb: 'Email settings for invitations, password resets and security alerts.' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
+
+const REGISTRATION_MODES: { id: RegistrationMode; label: string; detail: string }[] = [
+  { id: 'invite', label: 'Invitation only', detail: 'Only administrators can create accounts. The Create account page is turned off.' },
+  { id: 'approval', label: 'Open registration with administrator approval', detail: 'Anyone can request an account. They confirm their email address, then an administrator approves the request.' },
+  { id: 'open', label: 'Open registration', detail: 'Anyone can create an account after confirming their email address.' },
+];
+
+function RegistrationSection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
+  const r = view.registration;
+  const [mode, setMode] = useState<RegistrationMode>(r.mode);
+  return (
+    <div className="card settings-section">
+      <div className="page-head">
+        <h2>
+          Account registration <SourceBadge source={r.source} />
+        </h2>
+        <ResetButton group="registration" source={r.source} onDone={onSaved} />
+      </div>
+      <p className="muted small">
+        New accounts are standard users. They can’t see or use any servers until someone shares one with them. Each person must confirm their email address.
+      </p>
+      <Form
+        submit="Save registration settings"
+        success="Registration settings saved."
+        onSubmit={async () => {
+          onSaved(await put<SettingsView>('/api/admin/settings/registration', { mode }));
+        }}
+      >
+        <div className="radio-list" role="radiogroup" aria-label="Account registration">
+          {REGISTRATION_MODES.map((m) => (
+            <label key={m.id} className="radio">
+              <input type="radio" name="registration-mode" checked={mode === m.id} onChange={() => setMode(m.id)} />
+              <span>
+                <strong>{m.label}</strong>
+                <span className="muted small block">{m.detail}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {mode !== 'invite' && !r.mailReady && (
+          <p className="error">Set up email under Settings → Email first. Without it, people can’t receive their confirmation link.</p>
+        )}
+        {mode === 'open' && (
+          <p className="muted small">Consider turning on the browser check below to keep automated sign-ups out.</p>
+        )}
+      </Form>
+    </div>
+  );
+}
+
+function BrowserCheckSection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
+  const t = view.turnstile;
+  const [siteKey, setSiteKey] = useState(t.siteKey);
+  const [secretKey, setSecretKey] = useState('');
+  const [clearSecret, setClearSecret] = useState(false);
+  const [signup, setSignup] = useState(t.signup);
+  const [reset, setReset] = useState(t.reset);
+  const [login, setLogin] = useState(t.login);
+  const keyChanged = siteKey.trim() !== t.siteKey;
+  const haveSecret = t.hasSecretKey && !keyChanged && !clearSecret;
+  return (
+    <div className="card settings-section">
+      <div className="page-head">
+        <h2>
+          Browser check (Cloudflare Turnstile) <SourceBadge source={t.source} />
+        </h2>
+        <ResetButton group="turnstile" source={t.source} onDone={onSaved} />
+      </div>
+      <p className="muted small">
+        Asks people to pass a Cloudflare check before they create an account, request a password reset or sign in. Create a Turnstile widget in your Cloudflare dashboard
+        (Turnstile → Add widget) for this site’s hostname, then enter its keys here. This is separate from routing the site through Cloudflare’s proxy, and it works either way.
+      </p>
+      <Form
+        submit="Save browser check settings"
+        success="Browser check settings saved."
+        onSubmit={async () => {
+          const body = {
+            siteKey: siteKey.trim(),
+            ...(secretKey.trim() ? { secretKey: secretKey.trim() } : clearSecret ? { secretKey: '' } : {}),
+            signup,
+            reset,
+            login,
+          };
+          onSaved(await put<SettingsView>('/api/admin/settings/turnstile', body));
+          setSecretKey('');
+          setClearSecret(false);
+        }}
+      >
+        <Field label="Site key" hint="The public key from Cloudflare.">
+          <input value={siteKey} onChange={(e) => setSiteKey(e.target.value)} autoComplete="off" spellCheck={false} />
+        </Field>
+        <Field
+          label="Secret key"
+          hint={
+            haveSecret
+              ? 'A secret key is saved. Leave blank to keep it.'
+              : t.hasSecretKey && keyChanged
+                ? 'If you change the site key, enter the secret key again.'
+                : 'Stored encrypted and never shown again.'
+          }
+        >
+          <input
+            type="password"
+            value={secretKey}
+            onChange={(e) => setSecretKey(e.target.value)}
+            autoComplete="new-password"
+            spellCheck={false}
+            placeholder={haveSecret ? '••••••••' : ''}
+          />
+        </Field>
+        {haveSecret && !secretKey && (
+          <label className="check">
+            <input type="checkbox" checked={clearSecret} onChange={(e) => setClearSecret(e.target.checked)} /> Remove the saved secret key
+          </label>
+        )}
+        <fieldset className="check-group">
+          <legend>Require the check when someone</legend>
+          <label className="check">
+            <input type="checkbox" checked={signup} onChange={(e) => setSignup(e.target.checked)} /> Creates an account
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={reset} onChange={(e) => setReset(e.target.checked)} /> Requests a password reset email
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={login} onChange={(e) => setLogin(e.target.checked)} /> Signs in
+          </label>
+        </fieldset>
+        <p className="muted small">
+          When a check is required, people who can’t pass it — or if Cloudflare can’t be reached — are turned away. Keep a way in: if you turn on sign-in, make sure the keys are
+          correct first. If the check ever locks everyone out, run “any-ssh browser-check-off” on the server.
+        </p>
+      </Form>
+    </div>
+  );
+}
 
 function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
   const m = view.mail;
