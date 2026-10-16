@@ -78,8 +78,8 @@ export function VersionCard() {
       <div className="page-head" style={{ margin: 0 }}>
         <div>
           <strong>Any-SSH {v.current.version ?? 'dev'}</strong>{' '}
-          <span className="muted small">
-            build {short(v.current.commit)}
+          <span className="muted small" style={{ fontWeight: 400 }}>
+            Build {short(v.current.commit)}
             {v.current.builtAt ? `, ${formatTime(Date.parse(v.current.builtAt))}` : ''}
           </span>
           {v.updateAvailable && <span className="badge warn" style={{ marginLeft: 8 }}>Update available</span>}
@@ -98,15 +98,20 @@ export function VersionCard() {
         </p>
       )}
       {v.pending ? (
-        <p className="small" style={{ margin: '0.5rem 0 0' }}>
-          <strong>
-            {v.pending.trigger === 'auto' ? 'An automatic update' : `An update requested by ${v.pending.requestedBy}`} is scheduled for {formatTime(v.pending.scheduledFor)}.
-          </strong>{' '}
-          Connected users have been warned. The server backs up, installs and restarts within a few minutes of that time.{' '}
-          <button className="ghost small" disabled={busy} onClick={() => run(() => del<VersionInfo>('/api/admin/version/update-now'))}>
-            Cancel
+        <div className="notice-row" role="status">
+          <p className="small" style={{ margin: 0 }}>
+            {v.pending.trigger === 'auto' ? 'Automatic update' : `Update requested by ${v.pending.requestedBy}`} scheduled for {formatTime(v.pending.scheduledFor)}. Connected users have been
+            warned. The server backs up, installs and restarts within a few minutes of that time.
+          </p>
+          <button
+            disabled={busy}
+            onClick={() => {
+              if (confirm('Cancel the scheduled update? Connected users will no longer be warned.')) void run(() => del<VersionInfo>('/api/admin/version/update-now'));
+            }}
+          >
+            Cancel update
           </button>
-        </p>
+        </div>
       ) : (
         <div style={{ margin: '0.5rem 0 0' }}>
           {!confirming ? (
