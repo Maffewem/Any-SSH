@@ -102,4 +102,12 @@ describe('usage limits by account type', () => {
     expect(same.body.limits.maxTerminalsPerAdmin).toBeNull();
     expect(built.ctx.settings.terminalLimit('admin')).toBe(3);
   });
+
+  it('reports the defaults alongside saved limits', async () => {
+    const admin = await setupAdmin(built);
+    await admin.put('/api/admin/settings/limits', { maxTerminalsPerUser: 4, maxTerminalsPerAdmin: 9, detachMinutes: 1 });
+    const { limits } = (await admin.get('/api/admin/settings')).body;
+    expect(limits.defaults).toEqual({ maxTerminalsPerUser: 8, maxTerminalsPerAdmin: null, detachMinutes: 5 });
+    expect(limits).toMatchObject({ maxTerminalsPerUser: 4, maxTerminalsPerAdmin: 9, detachMinutes: 1 });
+  });
 });

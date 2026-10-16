@@ -404,7 +404,12 @@ export class Settings {
         from: mail.from,
       },
       sessions: { source: this.source('sessions'), ...this.sessions },
-      limits: { source: this.source('limits'), ...this.limits },
+      limits: {
+        source: this.source('limits'),
+        ...this.limits,
+        // What "Reset to defaults" would restore, so the page can show it beside each limit.
+        defaults: { maxTerminalsPerUser: this.env.maxTerminalsPerUser, maxTerminalsPerAdmin: null, detachMinutes: this.env.detachMinutes },
+      },
       security: { source: this.source('security'), ...this.security },
       maintenance: { source: this.source('maintenance'), ...this.maintenance },
       backup: this.describeBackup(),

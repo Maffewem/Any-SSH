@@ -275,10 +275,13 @@ function SessionSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Se
 
 function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
   const l = view.limits;
+  const d = l.defaults;
   const [max, setMax] = useState(String(l.maxTerminalsPerUser));
-  const [adminMax, setAdminMax] = useState(l.maxTerminalsPerAdmin === null ? '' : String(l.maxTerminalsPerAdmin));
+  const [adminSame, setAdminSame] = useState(l.maxTerminalsPerAdmin === null);
+  const [adminMax, setAdminMax] = useState(String(l.maxTerminalsPerAdmin ?? l.maxTerminalsPerUser));
   const [detach, setDetach] = useState(String(l.detachMinutes));
   const [saved, setSaved] = useState(false);
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   return (
     <div className="card settings-section">
       <div className="page-head">
@@ -287,26 +290,101 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
         </h2>
         <ResetButton group="limits" source={l.source} onDone={onSaved} />
       </div>
+      <p className="muted small">
+        Limits apply per person. Administrators can be given their own terminal limit; the reconnect window is the same for every account. Changes take
+        effect for the next terminal opened or dropped; terminals already open are not closed.
+      </p>
       <Form
         submit="Save limits"
         onSubmit={async () => {
           setSaved(false);
-          onSaved(await put<SettingsView>('/api/admin/settings/limits', { maxTerminalsPerUser: Number(max), maxTerminalsPerAdmin: adminMax.trim() ? Number(adminMax) : null, detachMinutes: Number(detach) }));
+          onSaved(
+            await put<SettingsView>('/api/admin/settings/limits', {
+              maxTerminalsPerUser: Number(max),
+              maxTerminalsPerAdmin: adminSame ? null : Number(adminMax),
+              detachMinutes: Number(detach),
+            }),
+          );
           setSaved(true);
         }}
       >
-        <Field label="Open terminals: standard users" hint="The most terminals one standard user can have open at once.">
-          <input value={max} onChange={(e) => setMax(e.target.value)} inputMode="numeric" required />
-        </Field>
-        <Field label="Open terminals: administrators" hint="Leave empty to use the same limit as standard users.">
-          <input value={adminMax} onChange={(e) => setAdminMax(e.target.value)} inputMode="numeric" placeholder="Same as standard users" />
-        </Field>
-        <Field
-          label="Keep a terminal after the browser drops (minutes)"
-          hint="The SSH session stays open this long so the browser can pick up where it left off. 0 closes it straight away. Logging out, expiry and removed access still end it at once."
-        >
-          <input value={detach} onChange={(e) => setDetach(e.target.value)} inputMode="numeric" required />
-        </Field>
+        <div className="table-wrap">
+          <table className="limits-table">
+            <thead>
+              <tr>
+                <th scope="col">Limit</th>
+                <th scope="col">Standard users</th>
+                <th scope="col">Administrators</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">
+                  <strong>Open terminals at once</strong>
+                  <small>
+                    The most terminals one person can have open at the same time, across all their devices, including terminals waiting to
+                    reconnect. When reached, opening another is refused until one is closed. Between 1 and 100.
+                  </small>
+                </th>
+                <td data-label="Standard users">
+                  <label className="limit-input">
+                    <input
+                      value={max}
+                      onChange={(e) => setMax(e.target.value)}
+                      inputMode="numeric"
+                      required
+                      aria-label="Open terminals at once, standard users"
+                    />
+                    <span>terminals</span>
+                  </label>
+                  <small>Default: {plural(d.maxTerminalsPerUser, 'terminal', 'terminals')}</small>
+                </td>
+                <td data-label="Administrators">
+                  <select
+                    value={adminSame ? 'same' : 'custom'}
+                    onChange={(e) => setAdminSame(e.target.value === 'same')}
+                    aria-label="Administrator terminal limit"
+                  >
+                    <option value="same">Same as standard users</option>
+                    <option value="custom">Set a separate limit</option>
+                  </select>
+                  {adminSame ? (
+                    <small>Currently {plural(Number(max) || 0, 'terminal', 'terminals')}</small>
+                  ) : (
+                    <label className="limit-input">
+                      <input
+                        value={adminMax}
+                        onChange={(e) => setAdminMax(e.target.value)}
+                        inputMode="numeric"
+                        required
+                        aria-label="Open terminals at once, administrators"
+                      />
+                      <span>terminals</span>
+                    </label>
+                  )}
+                  <small>Default: same as standard users</small>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">
+                  <strong>Reconnect window</strong>
+                  <small>
+                    If the browser loses its connection (a closed laptop, a dropped mobile signal), the SSH session is kept open this long so
+                    it can be picked up where it left off. After that it is closed. 0 closes it straight away. Signing out, session expiry and
+                    removed access always close it at once.
+                  </small>
+                </th>
+                <td data-label="All accounts" colSpan={2}>
+                  <label className="limit-input">
+                    <input value={detach} onChange={(e) => setDetach(e.target.value)} inputMode="numeric" required aria-label="Reconnect window in minutes" />
+                    <span>minutes</span>
+                  </label>
+                  <small>Applies to all accounts. Default: {plural(d.detachMinutes, 'minute', 'minutes')}. Up to 1440 (24 hours).</small>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         {saved && <p className="ok">Saved.</p>}
       </Form>
     </div>
