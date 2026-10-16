@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { del, downloadText, errorMessage, formatTime, get, post, put, type BackupEncryption, type BackupRunView, type BackupSettingsView, type BackupStatusView, type SettingsView } from '../api';
-import { Field, Form, useAsync } from '../ui';
+import { Field, Form, useAsync, useConfirm, useToast } from '../ui';
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 type Kind = BackupSettingsView['target']['kind'];
@@ -68,19 +68,18 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
   const [sftpPassword, setSftpPassword] = useState('');
   const [sftpKey, setSftpKey] = useState('');
   const [password, setPassword] = useState('');
-  const [saved, setSaved] = useState(false);
   const [generated, setGenerated] = useState<{ publicKey: string; secretKey: string } | null>(null);
   const [kept, setKept] = useState(false);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
 
   const action = async (fn: () => Promise<string>) => {
     setBusy(true);
-    setMessage(null);
     try {
-      setMessage({ ok: true, text: await fn() });
+      toast.success(await fn());
     } catch (e) {
-      setMessage({ ok: false, text: errorMessage(e) });
+      toast.error(errorMessage(e));
     } finally {
       setBusy(false);
       info.reload();
@@ -114,8 +113,15 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
           <button
             className="ghost small"
             onClick={async () => {
-              if (window.confirm('Stop backing up and forget the destination, its credentials and the recovery public key? Existing backups are not deleted.')) {
+              const ok = await confirm({
+                title: 'Turn off backups and forget settings',
+                message: 'Backups stop, and the destination, its credentials and the recovery public key are forgotten. Existing backups are not deleted.',
+                confirmLabel: 'Turn off and forget',
+                danger: true,
+              });
+              if (ok) {
                 onSaved(await del<SettingsView>('/api/admin/settings/backup'), true);
+                toast.success('Backups turned off and settings forgotten.');
               }
             }}
           >
@@ -146,15 +152,20 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
 
       <Form
         submit="Save backup settings"
+        success="Backup settings saved."
         onSubmit={async () => {
-          setSaved(false);
           if (
             encryption === 'none' &&
             b.encryption !== 'none' &&
             (kind === 's3' || kind === 'sftp') &&
-            !window.confirm('Send unencrypted copies of the database to another provider? Anyone with access to that storage can read the user list, password hashes, server addresses and audit log.')
+            !(await confirm({
+              title: 'Send unencrypted backups to another provider',
+              message: 'Anyone with access to that storage can read the user list, password hashes, server addresses and audit log.',
+              confirmLabel: 'Send unencrypted copies',
+              danger: true,
+            }))
           ) {
-            return;
+            return false;
           }
           onSaved(
             await put<SettingsView>('/api/admin/settings/backup', {
@@ -174,7 +185,6 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
           setSecretKey('');
           setSftpPassword('');
           setSftpKey('');
-          setSaved(true);
           info.reload();
         }}
       >
@@ -225,6 +235,7 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
                 setGenerated(pair);
                 setKept(false);
                 setPublicKey(pair.publicKey);
+                toast.success('Key pair generated. Save the secret key now.');
               }}
             >
               Generate a key pair
@@ -370,7 +381,6 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
         <Field label="Your password" hint="Needed to change where backups go or how they are encrypted.">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
         </Field>
-        {saved && <p className="ok">Saved.</p>}
       </Form>
 
       <div className="subsection">
@@ -402,7 +412,6 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
             Back up now
           </button>
         </div>
-        {message && <p className={message.ok ? 'ok' : 'error'}>{message.text}</p>}
       </div>
 
       {info.data && info.data.runs.length > 0 && (

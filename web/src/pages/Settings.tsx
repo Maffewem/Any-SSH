@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { del, errorMessage, formatTime, get, post, put, type SettingsView } from '../api';
-import { Field, Form, SubTabs, useAsync, useRememberedTab } from '../ui';
+import { Field, Form, SubTabs, useAsync, useConfirm, useRememberedTab, useToast } from '../ui';
 import { BackupSection } from './Backups';
 import { JumpHostsSection } from './JumpHosts';
 import { VersionCard } from './Version';
@@ -10,9 +10,24 @@ function SourceBadge({ source }: { source: 'environment' | 'web' }) {
 }
 
 function ResetButton({ group, source, onDone }: { group: string; source: 'environment' | 'web'; onDone: (s: SettingsView, reset: true) => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   if (source !== 'web') return null;
   return (
-    <button className="ghost small" onClick={async () => onDone(await del<SettingsView>(`/api/admin/settings/${group}`), true)}>
+    <button
+      className="ghost small"
+      onClick={async () => {
+        const ok = await confirm({
+          title: 'Restore default settings',
+          message: 'The values saved on this tab are discarded and the server default is used again.',
+          confirmLabel: 'Restore default',
+          danger: true,
+        });
+        if (!ok) return;
+        onDone(await del<SettingsView>(`/api/admin/settings/${group}`), true);
+        toast.success('Default settings restored.');
+      }}
+    >
       Restore default
     </button>
   );
@@ -84,8 +99,7 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
   const [clearPassword, setClearPassword] = useState(false);
   const [from, setFrom] = useState(m.from);
   const [testTo, setTestTo] = useState('');
-  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
-  const [saved, setSaved] = useState(false);
+  const toast = useToast();
   const destinationChanged = host !== m.host || username !== m.username;
 
   return (
@@ -99,8 +113,8 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
       <p className="muted small">Used for invites, password resets and security notices. Without it, emails are written to the server log.</p>
       <Form
         submit="Save email settings"
+        success="Email settings saved."
         onSubmit={async () => {
-          setSaved(false);
           const body = {
             enabled,
             ...(host.trim() ? { host: host.trim() } : {}),
@@ -113,7 +127,6 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
           onSaved(await put<SettingsView>('/api/admin/settings/mail', body));
           setPassword('');
           setClearPassword(false);
-          setSaved(true);
         }}
       >
         <label className="check">
@@ -175,7 +188,6 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
         <Field label="Send from" hint='For example: Any-SSH <any-ssh@example.com>'>
           <input value={from} onChange={(e) => setFrom(e.target.value)} required />
         </Field>
-        {saved && <p className="ok">Saved.</p>}
       </Form>
 
       <div className="subsection">
@@ -185,22 +197,17 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
           <input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" style={{ maxWidth: 320 }} />
           <button
             onClick={async () => {
-              setTestResult(null);
               try {
                 const r = await post<{ sent: boolean; to: string }>('/api/admin/settings/mail/test', testTo ? { to: testTo } : {});
-                setTestResult({
-                  ok: true,
-                  text: r.sent ? `Sent to ${r.to}. Check the inbox (and spam folder).` : 'SMTP is off, so the message was written to the server log.',
-                });
+                toast.success(r.sent ? `Test email sent to ${r.to}. Check the inbox and spam folder.` : 'SMTP is off, so the message was written to the server log.');
               } catch (e) {
-                setTestResult({ ok: false, text: errorMessage(e) });
+                toast.error(errorMessage(e));
               }
             }}
           >
             Send test
           </button>
         </div>
-        {testResult && <p className={testResult.ok ? 'ok' : 'error'}>{testResult.text}</p>}
       </div>
     </div>
   );
@@ -211,7 +218,6 @@ function SessionSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Se
   const [lockMinutes, setLock] = useState(String(s.lockMinutes));
   const [idleMinutes, setIdle] = useState(String(s.idleMinutes));
   const [maxHours, setMax] = useState(String(s.maxHours));
-  const [saved, setSaved] = useState(false);
   return (
     <div className="card settings-section">
       <div className="page-head">
@@ -222,8 +228,8 @@ function SessionSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Se
       </div>
       <Form
         submit="Save session settings"
+        success="Session settings saved."
         onSubmit={async () => {
-          setSaved(false);
           onSaved(
             await put<SettingsView>('/api/admin/settings/sessions', {
               lockMinutes: Number(lockMinutes),
@@ -231,7 +237,6 @@ function SessionSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Se
               maxHours: Number(maxHours),
             }),
           );
-          setSaved(true);
         }}
       >
         <Field
@@ -246,7 +251,6 @@ function SessionSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Se
         <Field label="Maximum session length (hours)" hint="Sign-in, with 2FA, is needed again after this however active the user is. Applies to new sign-ins.">
           <input value={maxHours} onChange={(e) => setMax(e.target.value)} inputMode="numeric" required />
         </Field>
-        {saved && <p className="ok">Saved.</p>}
       </Form>
     </div>
   );
@@ -259,7 +263,6 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
   const [adminSame, setAdminSame] = useState(l.maxTerminalsPerAdmin === null);
   const [adminMax, setAdminMax] = useState(String(l.maxTerminalsPerAdmin ?? l.maxTerminalsPerUser));
   const [detach, setDetach] = useState(String(l.detachMinutes));
-  const [saved, setSaved] = useState(false);
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   return (
     <div className="card settings-section">
@@ -275,8 +278,8 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
       </p>
       <Form
         submit="Save limits"
+        success="Limits saved."
         onSubmit={async () => {
-          setSaved(false);
           onSaved(
             await put<SettingsView>('/api/admin/settings/limits', {
               maxTerminalsPerUser: Number(max),
@@ -284,7 +287,6 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
               detachMinutes: Number(detach),
             }),
           );
-          setSaved(true);
         }}
       >
         <div className="table-wrap">
@@ -364,20 +366,19 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
             </tbody>
           </table>
         </div>
-        {saved && <p className="ok">Saved.</p>}
       </Form>
     </div>
   );
 }
 
 function SecuritySection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
+  const toast = useToast();
   const b = view.security;
   const [accountThreshold, setAccount] = useState(String(b.accountThreshold));
   const [ipThreshold, setIp] = useState(String(b.ipThreshold));
   const [windowMinutes, setWindow] = useState(String(b.windowMinutes));
   const [lockoutMinutes, setLockout] = useState(String(b.lockoutMinutes));
   const [notifyOwner, setNotify] = useState(b.notifyOwner);
-  const [saved, setSaved] = useState(false);
   const lockouts = useAsync(() => get<{ ips: { ip: string; lockedUntil: number; failures: number }[] }>('/api/admin/lockouts'), [view]);
   const [unlocked, setUnlocked] = useState<string[]>([]);
   const ips = (lockouts.data?.ips ?? []).filter((l) => !unlocked.includes(l.ip));
@@ -395,8 +396,8 @@ function SecuritySection({ view, onSaved }: { view: SettingsView; onSaved: (s: S
       </p>
       <Form
         submit="Save protection settings"
+        success="Protection settings saved."
         onSubmit={async () => {
-          setSaved(false);
           onSaved(
             await put<SettingsView>('/api/admin/settings/security', {
               accountThreshold: Number(accountThreshold),
@@ -406,7 +407,6 @@ function SecuritySection({ view, onSaved }: { view: SettingsView; onSaved: (s: S
               notifyOwner,
             }),
           );
-          setSaved(true);
         }}
       >
         <Field label="Lock an account after (failed attempts)" hint="Counted within the window below. Minimum 3.">
@@ -424,7 +424,6 @@ function SecuritySection({ view, onSaved }: { view: SettingsView; onSaved: (s: S
         <label className="check">
           <input type="checkbox" checked={notifyOwner} onChange={(e) => setNotify(e.target.checked)} /> Email the account owner when their account is locked
         </label>
-        {saved && <p className="ok">Saved.</p>}
       </Form>
       <div className="subsection">
         <h3>Blocked addresses</h3>
@@ -441,6 +440,7 @@ function SecuritySection({ view, onSaved }: { view: SettingsView; onSaved: (s: S
                   onClick={async () => {
                     await del(`/api/admin/lockouts/ip/${encodeURIComponent(l.ip)}`);
                     setUnlocked((u) => [...u, l.ip]);
+                    toast.success(`${l.ip} unblocked.`);
                   }}
                 >
                   Unblock
@@ -464,7 +464,6 @@ function MaintenanceSection({ view, onSaved }: { view: SettingsView; onSaved: (s
   const [duration, setDuration] = useState(String(m.durationMinutes));
   const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const [timezone, setTimezone] = useState(m.source === 'web' ? m.timezone : browserZone || m.timezone);
-  const [saved, setSaved] = useState(false);
   return (
     <div className="card settings-section">
       <div className="page-head">
@@ -479,10 +478,9 @@ function MaintenanceSection({ view, onSaved }: { view: SettingsView; onSaved: (s
       </p>
       <Form
         submit="Save window"
+        success="Maintenance window saved."
         onSubmit={async () => {
-          setSaved(false);
           onSaved(await put<SettingsView>('/api/admin/settings/maintenance', { enabled, days, start, durationMinutes: Number(duration), timezone: timezone.trim() }));
-          setSaved(true);
         }}
       >
         <label className="check">
@@ -507,7 +505,6 @@ function MaintenanceSection({ view, onSaved }: { view: SettingsView; onSaved: (s
         <Field label="Timezone" hint="A name such as Europe/London or America/New_York. Daylight saving is followed.">
           <input value={timezone} onChange={(e) => setTimezone(e.target.value)} required />
         </Field>
-        {saved && <p className="ok">Saved.</p>}
       </Form>
     </div>
   );

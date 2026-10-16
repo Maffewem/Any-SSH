@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { del, formatTime, get, patch, post, put, type AuthMethod, type ConnectChoice, type ConnectCredential, type JumpHost, type JumpMode, type Server, type Share, type ShareCredentials, type SshKey } from '../api';
-import { Field, Form, Modal, useAsync } from '../ui';
+import { Field, Form, Modal, useAsync, useConfirm, useToast } from '../ui';
 
 export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, choice?: ConnectChoice) => void; isAdmin: boolean }) {
   const { data, error, reload } = useAsync(() => get<{ servers: Server[] }>('/api/servers'), []);
@@ -199,7 +199,8 @@ function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: 
   const jumpHosts = useAsync(() => (isOwner && isAdmin ? get<{ jumpHosts: JumpHost[] }>('/api/admin/jump-hosts') : Promise.resolve({ jumpHosts: [] })), []);
   // A non-admin owner cannot move a server off a jump host an admin picked.
   const jumpLocked = !isAdmin && server?.jump.mode === 'fixed';
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const confirm = useConfirm();
+  const toast = useToast();
 
   const save = async () => {
     if (!isOwner) {
@@ -217,7 +218,7 @@ function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: 
 
   return (
     <Modal title={server ? `Edit ${server.name}` : 'Add server'} onClose={onClose}>
-      <Form submit="Save" onSubmit={save}>
+      <Form submit="Save" success={server ? `${server.name} saved.` : 'Server added.'} onSubmit={save}>
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
         </Field>
@@ -311,16 +312,25 @@ function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: 
       {server && (
         <div className="subsection">
           <HostKeyPanel server={server} isOwner={isOwner} onChanged={onSaved} />
-          {isOwner &&
-            (confirmDelete ? (
-              <button className="danger" onClick={async () => (await del(`/api/servers/${server.id}`), onSaved())}>
-                Really delete {server.name}?
-              </button>
-            ) : (
-              <button className="danger-outline" onClick={() => setConfirmDelete(true)}>
-                Delete server
-              </button>
-            ))}
+          {isOwner && (
+            <button
+              className="danger-outline"
+              onClick={async () => {
+                const ok = await confirm({
+                  title: `Delete server ${server.name}`,
+                  message: 'It is removed for everyone it is shared with, and open terminals close.',
+                  confirmLabel: 'Delete server',
+                  danger: true,
+                });
+                if (!ok) return;
+                await del(`/api/servers/${server.id}`);
+                toast.success(`${server.name} deleted.`);
+                onSaved();
+              }}
+            >
+              Delete server
+            </button>
+          )}
         </div>
       )}
     </Modal>
@@ -339,22 +349,26 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
   const [newCredentials, setNewCredentials] = useState<ShareCredentials>(server.credentials === 'own' ? 'own' : 'owner');
   const isOwner = server.access === 'owner';
   const already = new Set(shares.data?.shares.map((s) => s.userId));
-  const run = async (fn: () => Promise<unknown>) => {
+  const toast = useToast();
+  const run = async (fn: () => Promise<unknown>, done: string) => {
     setError(null);
     try {
       await fn();
+      toast.success(done);
       shares.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
   const update = (s: Share, change: Partial<Pick<Share, 'permission' | 'credentials' | 'canReshare'>>) =>
-    run(() =>
-      put(`/api/servers/${server.id}/shares/${s.userId}`, {
-        permission: change.permission ?? s.permission,
-        credentials: change.credentials ?? s.credentials,
-        canReshare: change.canReshare ?? s.canReshare,
-      }),
+    run(
+      () =>
+        put(`/api/servers/${server.id}/shares/${s.userId}`, {
+          permission: change.permission ?? s.permission,
+          credentials: change.credentials ?? s.credentials,
+          canReshare: change.canReshare ?? s.canReshare,
+        }),
+      `Sharing updated for @${s.username}.`,
     );
 
   return (
@@ -393,7 +407,7 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
                 </label>
               )}
               {(isOwner || s.permission === 'use') && (
-                <button className="ghost" onClick={() => run(() => del(`/api/servers/${server.id}/shares/${s.userId}`))}>
+                <button className="ghost" onClick={() => run(() => del(`/api/servers/${server.id}/shares/${s.userId}`), `Stopped sharing with @${s.username}.`)}>
                   Remove
                 </button>
               )}
@@ -419,7 +433,9 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
               <span>
                 {u.displayName} <span className="muted">@{u.username}</span>
               </span>
-              <button onClick={() => run(() => put(`/api/servers/${server.id}/shares/${u.id}`, { permission: 'use', credentials: newCredentials }))}>
+              <button onClick={() =>
+                run(() => put(`/api/servers/${server.id}/shares/${u.id}`, { permission: 'use', credentials: newCredentials }), `Shared ${server.name} with @${u.username}.`)
+              }>
                 Share
               </button>
             </li>
@@ -512,10 +528,13 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
   const [reviewing, setReviewing] = useState(false);
   const pin = server.hostKey;
   const change = server.hostKeyChange;
-  const run = async (fn: () => Promise<unknown>) => {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const run = async (fn: () => Promise<unknown>, done: string) => {
     setError(null);
     try {
       await fn();
+      toast.success(done);
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -551,7 +570,7 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
                   <button
                     className="danger"
                     disabled={!password}
-                    onClick={() => run(() => post(`/api/servers/${server.id}/host-key/accept`, { fingerprint: change.fingerprint, password }))}
+                    onClick={() => run(() => post(`/api/servers/${server.id}/host-key/accept`, { fingerprint: change.fingerprint, password }), 'New host key accepted.')}
                   >
                     Accept the new key
                   </button>
@@ -563,7 +582,7 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
                 <button className="danger-outline" onClick={() => setReviewing(true)}>
                   Review and accept…
                 </button>
-                <button onClick={() => run(() => post(`/api/servers/${server.id}/host-key/dismiss`))}>Dismiss (keep the pinned key)</button>
+                <button onClick={() => run(() => post(`/api/servers/${server.id}/host-key/dismiss`), 'Warning dismissed. The pinned key is kept.')}>Dismiss (keep the pinned key)</button>
               </div>
             )
           ) : (
@@ -580,9 +599,13 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
             <button
               className="link"
               onClick={async () => {
-                if (confirm('Forget the pinned host key? You will be asked to verify it again on the next connection.')) {
-                  await run(() => post(`/api/servers/${server.id}/forget-host-key`));
-                }
+                const ok = await confirm({
+                  title: `Forget the host key for ${server.name}`,
+                  message: 'You will be asked to verify it again on the next connection.',
+                  confirmLabel: 'Forget host key',
+                  danger: true,
+                });
+                if (ok) await run(() => post(`/api/servers/${server.id}/forget-host-key`), 'Host key forgotten.');
               }}
             >
               Forget

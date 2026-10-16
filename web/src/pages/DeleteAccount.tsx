@@ -42,6 +42,7 @@ export function DeleteAccountForm(props: { self: boolean; userId?: string; usern
     <Form
       submit={self ? 'Permanently delete my account' : `Permanently delete @${username}`}
       danger
+      success={self ? undefined : `@${username} deleted.`}
       onSubmit={async () => {
         if (transferring && !target) throw new Error('Choose who should take over the shared servers.');
         if (shared.length > 0 && !transferring && confirm.trim().toLowerCase() !== 'delete') throw new Error('Type “delete” to confirm.');

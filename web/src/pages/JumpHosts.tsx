@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { del, errorMessage, formatTime, get, patch, post, type JumpHost, type JumpTest } from '../api';
-import { CopyButton, Field, Form, useAsync } from '../ui';
+import { CopyButton, Field, Form, useAsync, useConfirm, useToast } from '../ui';
 
 /** Admin section: the bastions servers can be routed through. */
 export function JumpHostsSection() {
@@ -48,6 +48,7 @@ function AddJumpHost({ onDone }: { onDone: () => void }) {
   return (
     <Form
       submit="Add jump host"
+      success="Jump host added."
       onSubmit={async () => {
         await post('/api/admin/jump-hosts', { name, host, port: Number(port), username });
         onDone();
@@ -75,11 +76,14 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
   const [test, setTest] = useState<JumpTest | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const run = async (fn: () => Promise<void>) => {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const run = async (fn: () => Promise<void>, done?: string) => {
     setBusy(true);
     setMessage(null);
     try {
       await fn();
+      if (done) toast.success(done);
     } catch (e) {
       setMessage(errorMessage(e));
     } finally {
@@ -130,15 +134,19 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
         >
           Test
         </button>
-        <button disabled={busy} onClick={() => run(async () => (await patch(`/api/admin/jump-hosts/${jump.id}`, { enabled: !jump.enabled }), onChange()))}>
+        <button disabled={busy} onClick={() => run(async () => (await patch(`/api/admin/jump-hosts/${jump.id}`, { enabled: !jump.enabled }), onChange()), jump.enabled ? `${jump.name} disabled.` : `${jump.name} enabled.`)}>
           {jump.enabled ? 'Disable' : 'Enable'}
         </button>
         {jump.hostKeyFingerprint && (
           <button
             disabled={busy}
-            onClick={() =>
-              confirm('Remove the verified host key? Terminals open through this jump host will close, and it cannot be used again until you verify a host key.') &&
-              run(async () => (await post(`/api/admin/jump-hosts/${jump.id}/forget-host-key`), setTest(null), onChange()))
+            onClick={async () =>
+              (await confirm({
+                title: `Remove the verified host key for ${jump.name}`,
+                message: 'Terminals open through this jump host will close, and it cannot be used again until you verify a host key.',
+                confirmLabel: 'Remove host key',
+                danger: true,
+              })) && run(async () => (await post(`/api/admin/jump-hosts/${jump.id}/forget-host-key`), setTest(null), onChange()), 'Verified host key removed.')
             }
           >
             Remove verified host key
@@ -147,10 +155,13 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
         <button
           className="danger-outline"
           disabled={busy}
-          onClick={() =>
-            confirm(
-              `Delete ${jump.name}? Terminals open through it will close. Servers set to use it will not connect until you choose another route; they never fall back to a direct connection.`,
-            ) && run(async () => (await del(`/api/admin/jump-hosts/${jump.id}`), onChange()))
+          onClick={async () =>
+            (await confirm({
+              title: `Delete jump host ${jump.name}`,
+              message: 'Terminals open through it will close. Servers set to use it will not connect until you choose another route; they never fall back to a direct connection.',
+              confirmLabel: 'Delete jump host',
+              danger: true,
+            })) && run(async () => (await del(`/api/admin/jump-hosts/${jump.id}`), onChange()), `${jump.name} deleted.`)
           }
         >
           Delete
@@ -171,7 +182,7 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
               <button
                 className="primary"
                 disabled={busy}
-                onClick={() => run(async () => (await post(`/api/admin/jump-hosts/${jump.id}/pin`, { fingerprint: test.fingerprint }), setTest(null), onChange()))}
+                onClick={() => run(async () => (await post(`/api/admin/jump-hosts/${jump.id}/pin`, { fingerprint: test.fingerprint }), setTest(null), onChange()), 'Host key verified.')}
               >
                 Trust this host key
               </button>

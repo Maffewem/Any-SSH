@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { del, downloadText, formatTime, get, post, type SshKey } from '../api';
-import { CopyButton, Field, Form, Modal, useAsync } from '../ui';
+import { CopyButton, Field, Form, Modal, useAsync, useConfirm, useToast } from '../ui';
 
 export function KeysPage() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const { data, error, reload } = useAsync(() => get<{ keys: SshKey[] }>('/api/keys'), []);
   const [dialog, setDialog] = useState<'generate' | 'import' | null>(null);
   const [exporting, setExporting] = useState<SshKey | null>(null);
@@ -41,10 +43,19 @@ export function KeysPage() {
                 <button
                   className="ghost"
                   onClick={async () => {
-                    if (!confirm(`Delete key "${k.name}"? Servers using it will stop working.`)) return;
+                    if (
+                      !(await confirm({
+                        title: `Delete key ${k.name}`,
+                        message: 'Servers using it will stop working.',
+                        confirmLabel: 'Delete key',
+                        danger: true,
+                      }))
+                    )
+                      return;
                     setActionError(null);
                     try {
                       await del(`/api/keys/${k.id}`);
+                      toast.success(`Key ${k.name} deleted.`);
                       reload();
                     } catch (e) {
                       setActionError(e instanceof Error ? e.message : String(e));
@@ -71,7 +82,7 @@ function GenerateDialog({ onClose, onDone }: { onClose: () => void; onDone: () =
   const [type, setType] = useState('ed25519');
   return (
     <Modal title="Generate SSH key" onClose={onClose}>
-      <Form submit="Generate" onSubmit={async () => (await post('/api/keys/generate', { name, type }), onDone())}>
+      <Form submit="Generate" success="Key generated." onSubmit={async () => (await post('/api/keys/generate', { name, type }), onDone())}>
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. work servers" required autoFocus />
         </Field>
@@ -95,6 +106,7 @@ function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
     <Modal title="Import private key" onClose={onClose}>
       <Form
         submit="Import"
+        success="Key imported."
         onSubmit={async () => {
           await post('/api/keys/import', { name, privateKey, ...(passphrase ? { passphrase } : {}) });
           setPrivateKey('');
@@ -126,6 +138,7 @@ function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
 }
 
 function ExportDialog({ keyRow, onClose }: { keyRow: SshKey; onClose: () => void }) {
+  const toast = useToast();
   const [password, setPassword] = useState('');
   const [done, setDone] = useState(false);
   return (
@@ -144,6 +157,7 @@ function ExportDialog({ keyRow, onClose }: { keyRow: SshKey; onClose: () => void
             setPassword('');
             downloadText(res.filename, res.privateKey);
             setDone(true);
+            toast.success('Key downloaded.');
           }}
         >
           <Field label="Your Any-SSH password">
