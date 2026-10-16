@@ -126,26 +126,26 @@ export function VersionCard() {
           )}
           {!v.agentActive && (
             <p className="muted small" style={{ margin: '0.25rem 0 0' }}>
-              To enable this, run <code>sudo any-ssh web-update on</code> on the server once (it starts the update agent; the app never gets Docker access).
+              To enable this, run <code>sudo any-ssh web-update on</code> on the server once.
             </p>
           )}
         </div>
       )}
       <p className="muted small" style={{ margin: '0.5rem 0 0' }}>
         {v.maintenance.enabled
-          ? `Maintenance window: ${v.maintenance.start} for ${v.maintenance.durationMinutes} min (${v.maintenance.timezone}); ${v.maintenance.open ? 'open now' : v.maintenance.nextStart ? `next opens ${formatTime(v.maintenance.nextStart)}` : 'closed'}. Automatic updates only install inside it.`
+          ? `Maintenance window: ${v.maintenance.start} for ${v.maintenance.durationMinutes} min (${v.maintenance.timezone}); ${v.maintenance.open ? 'open now' : v.maintenance.nextStart ? `next opens ${formatTime(v.maintenance.nextStart)}` : 'closed'}.`
           : 'No maintenance window set: automatic updates may install at any time (once a day).'}
       </p>
       <p className="muted small" style={{ margin: '0.5rem 0 0' }}>
         {v.checkEnabled
-          ? `Checks ${v.image} every few hours${v.checkedAt ? `; last checked ${formatTime(v.checkedAt)}` : ''}. Set ANYSSH_UPDATE_CHECK=false to turn this off.`
-          : 'Update checks are turned off (ANYSSH_UPDATE_CHECK=false), so this server never contacts the registry.'}{' '}
+          ? `Checks ${v.image} every few hours${v.checkedAt ? `; last checked ${formatTime(v.checkedAt)}` : ''}.`
+          : 'Update checks are off (ANYSSH_UPDATE_CHECK=false).'}{' '}
         {v.autoUpdate ? 'Automatic updates: on.' : 'Automatic updates: off (any-ssh auto-update on).'}
       </p>
       {(error || v.error) && <p className="error small">{error ?? `Last check failed: ${v.error}`}</p>}
       <div className="subsection">
         <h3>Update history</h3>
-        {history.data && history.data.updates.length === 0 && <p className="muted small">No updates recorded yet. Updates run with <code>sudo any-ssh update</code> or automatically are listed here (and in the audit log).</p>}
+        {history.data && history.data.updates.length === 0 && <p className="muted small">No updates recorded yet.</p>}
         {history.data && history.data.updates.length > 0 && (
           <div className="table-wrap" style={{ width: '100%' }}>
             <table className="small">

@@ -58,7 +58,7 @@ export function SettingsPage() {
           </button>
         ))}
       </nav>
-      <p className="muted small">{TABS.find((t) => t.id === tab)?.blurb} Changes take effect immediately and are recorded in the audit log.</p>
+      <p className="muted small">{TABS.find((t) => t.id === tab)?.blurb} Changes apply immediately.</p>
       {error && <p className="error">{error}</p>}
       {current && (
         <>
@@ -117,7 +117,7 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
         </h2>
         <ResetButton group="mail" source={m.source} onDone={onSaved} />
       </div>
-      <p className="muted small">Used for invites, password resets and security notices. Without it, emails are written to the server log.</p>
+      <p className="muted small">Without email, messages are written to the server log.</p>
       <Form
         submit="Save email settings"
         onSubmit={async () => {
@@ -201,7 +201,7 @@ function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Setti
 
       <div className="subsection">
         <h3>Send a test email</h3>
-        <p className="muted small">Uses the saved settings. Leave the address empty to send it to yourself.</p>
+        <p className="muted small">Leave empty to send it to yourself.</p>
         <div className="row wrap">
           <input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" style={{ maxWidth: 320 }} />
           <button
@@ -417,8 +417,7 @@ function MaintenanceSection({ view, onSaved }: { view: SettingsView; onSaved: (s
         <ResetButton group="maintenance" source={m.source} onDone={onSaved} />
       </div>
       <p className="muted small">
-        When automatic updates (<code>sudo any-ssh auto-update on</code>) may be installed. Outside the window a new version is only flagged as available.
-        Connected users are warned a couple of minutes before the restart. "Update now" is not limited by the window.
+        When automatic updates may install. Outside the window a new version is only flagged. "Update now" ignores the window.
       </p>
       <Form
         submit="Save window"
