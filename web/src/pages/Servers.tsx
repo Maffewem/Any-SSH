@@ -143,8 +143,8 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
               <button className="primary" onClick={() => (s.credentials === 'own' ? setConnecting(s) : onConnect(s))}>
                 Connect
               </button>
-              <button title="Connect with different credentials" onClick={() => setConnecting(s)}>
-                Connect as…
+              <button className="connect-as" title="Connect as…" aria-label="Connect as another credential" onClick={() => setConnecting(s)}>
+                Connect as ▾
               </button>
               {s.access !== 'use' && <button onClick={() => setEditing(s)}>Edit</button>}
               {(s.access === 'owner' || s.canShare) && <button onClick={() => setSharing(s)}>Share</button>}
@@ -428,15 +428,36 @@ function ShareDialog({ server, onClose }: { server: Server; onClose: () => void 
   );
 }
 
+const CONNECT_PREF = 'anyssh.connectAs.';
+type ConnectPref = { kind: ConnectCredential['type']; keyId?: string; username?: string };
+
+/** Last "Connect as" choice per server. Never holds key material: a one-off key is not stored. */
+function loadPref(serverId: string): ConnectPref | null {
+  try {
+    return JSON.parse(localStorage.getItem(CONNECT_PREF + serverId) ?? 'null');
+  } catch {
+    return null;
+  }
+}
+function savePref(serverId: string, pref: ConnectPref) {
+  try {
+    localStorage.setItem(CONNECT_PREF + serverId, JSON.stringify(pref));
+  } catch {
+    /* storage unavailable: the choice just isn't remembered */
+  }
+}
+
 /** Picks the credentials for one connection. A one-off key stays in this component and in memory only. */
 function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose: () => void; onConnect: (c: ConnectChoice) => void }) {
   const mustBringOwn = server.credentials === 'own';
   const keys = useAsync(() => get<{ keys: SshKey[] }>('/api/keys'), []);
-  const [kind, setKind] = useState<ConnectCredential['type']>(mustBringOwn ? 'oneoff' : 'saved');
-  const [keyId, setKeyId] = useState('');
+  const pref = loadPref(server.id);
+  const initial = pref && !(mustBringOwn && pref.kind === 'saved') ? pref.kind : mustBringOwn ? 'oneoff' : 'saved';
+  const [kind, setKind] = useState<ConnectCredential['type']>(initial);
+  const [keyId, setKeyId] = useState(pref?.keyId ?? '');
   const [privateKey, setPrivateKey] = useState('');
   const [passphrase, setPassphrase] = useState('');
-  const [username, setUsername] = useState(server.username);
+  const [username, setUsername] = useState(pref?.username ?? server.username);
 
   const submit = async () => {
     const credential: ConnectCredential =
@@ -447,6 +468,7 @@ function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose
           : kind === 'oneoff'
             ? { type: 'oneoff', privateKey, ...(passphrase ? { passphrase } : {}) }
             : { type: 'password' };
+    savePref(server.id, { kind, ...(kind === 'key' ? { keyId } : {}), ...(kind === 'saved' ? {} : { username }) });
     onConnect({ credential, ...(kind === 'saved' ? {} : { username }) });
     setPrivateKey('');
     setPassphrase('');
@@ -454,23 +476,22 @@ function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose
 
   return (
     <Modal title={`Connect to ${server.name}`} onClose={onClose}>
-      {mustBringOwn && <p className="muted small">The owner asked you to connect with your own credentials.</p>}
       <Form submit="Connect" onSubmit={submit}>
-        <Field label="Credentials">
+        <Field label="Connect as">
           <select value={kind} onChange={(e) => setKind(e.target.value as ConnectCredential['type'])}>
-            {!mustBringOwn && <option value="saved">This server’s saved credentials</option>}
-            <option value="key">One of my saved keys</option>
-            <option value="oneoff">A one-off key (not saved)</option>
-            <option value="password">Ask me for a password</option>
+            {!mustBringOwn && <option value="saved">Saved login</option>}
+            <option value="key">One of my keys</option>
+            <option value="oneoff">Pasted key (one-off)</option>
+            <option value="password">Password</option>
           </select>
         </Field>
         {kind !== 'saved' && (
-          <Field label="SSH username">
+          <Field label="Username">
             <input value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" required />
           </Field>
         )}
         {kind === 'key' && (
-          <Field label="Key" hint={keys.data?.keys.length === 0 ? 'You have no keys yet. Create one on the Keys page.' : undefined}>
+          <Field label="Key" hint={keys.data?.keys.length === 0 ? 'No keys yet. Add one on the Keys page.' : undefined}>
             <select value={keyId} onChange={(e) => setKeyId(e.target.value)} required>
               <option value="">Choose a key…</option>
               {keys.data?.keys.map((k) => (
@@ -483,23 +504,24 @@ function ConnectDialog({ server, onClose, onConnect }: { server: Server; onClose
         )}
         {kind === 'oneoff' && (
           <>
-            <Field label="Private key" hint="Used for this connection only. It is never written to the database and is gone when the session ends.">
+            <Field label="Private key" hint="Kept in memory for this session only.">
               <textarea
                 className="mono"
                 value={privateKey}
                 onChange={(e) => setPrivateKey(e.target.value)}
-                rows={7}
+                rows={5}
                 spellCheck={false}
                 autoComplete="off"
                 placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                 required
               />
             </Field>
-            <Field label="Passphrase (if the key has one)">
+            <Field label="Passphrase (optional)">
               <input type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} autoComplete="off" />
             </Field>
           </>
         )}
+        {kind === 'password' && <p className="muted small">You will be asked for the password when the terminal opens.</p>}
       </Form>
     </Modal>
   );
