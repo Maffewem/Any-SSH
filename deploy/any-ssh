@@ -330,7 +330,7 @@ update_poll() {
       if [ "$trigger" = auto ]; then
         ANYSSH_TRIGGER=auto ANYSSH_UPDATE_NOTE="inside the maintenance window" update_app update-if-newer
       else
-        ANYSSH_TRIGGER=manual ANYSSH_UPDATE_NOTE="requested in the app by $by" update_app update
+        ANYSSH_TRIGGER=manual ANYSSH_UPDATE_NOTE="requested in the app by $by" update_app update-if-newer
       fi
       ;;
     check-auto)

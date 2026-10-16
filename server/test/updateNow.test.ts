@@ -67,9 +67,16 @@ describe('Update now API', () => {
       const admin = await setupAdmin(b);
       const { client } = await createUser(b, admin, 'bob');
       expect((await client.post('/api/admin/version/update-now')).status).toBe(403);
-      expect((await admin.post('/api/admin/version/update-now')).status).toBe(400); // no agent yet
 
       b.ctx.updateRequests.heartbeat();
+      const known = (updateAvailable: boolean | null) => ((b.ctx.updates as any).status = { checkedAt: Date.now(), latest: null, updateAvailable, error: null });
+      known(false);
+      // Checks are off in this test, so the server can't tell; with a check run it must refuse unless newer is known.
+      (b.ctx.config as any).updateCheck = true;
+      expect((await admin.post('/api/admin/version/update-now')).status).toBe(400); // up to date
+      known(null);
+      expect((await admin.post('/api/admin/version/update-now')).status).toBe(400); // never confirmed
+      known(true);
       const warned: string[] = [];
       b.ctx.terminals.add({ id: 't', userId: 'x', serverId: 's', sessionIdHash: 'h', jumpHostId: null, detached: false, close() {}, setLocked() {}, notify: (m) => warned.push(m) });
       const res = await admin.post('/api/admin/version/update-now');

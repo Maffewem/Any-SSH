@@ -87,7 +87,7 @@ export function VersionCard() {
         </div>
         {v.checkEnabled && (
           <button onClick={check} disabled={busy}>
-            {busy ? 'Checking…' : 'Check now'}
+            {busy ? 'Checking…' : 'Check for updates'}
           </button>
         )}
       </div>
@@ -110,7 +110,11 @@ export function VersionCard() {
       ) : (
         <div style={{ margin: '0.5rem 0 0' }}>
           {!confirming ? (
-            <button disabled={busy || !v.agentActive} onClick={() => setConfirming(true)} title={v.agentActive ? '' : 'Needs the update agent on the server'}>
+            <button
+              disabled={busy || !v.agentActive || (v.checkEnabled && v.updateAvailable !== true)}
+              onClick={() => setConfirming(true)}
+              title={!v.agentActive ? 'Needs the update agent on the server' : v.checkEnabled && v.updateAvailable !== true ? 'No newer version is known. Check for updates first.' : ''}
+            >
               Update now
             </button>
           ) : (
@@ -122,6 +126,11 @@ export function VersionCard() {
               <button className="ghost" disabled={busy} onClick={() => setConfirming(false)}>
                 Never mind
               </button>
+            </p>
+          )}
+          {v.agentActive && v.checkEnabled && v.updateAvailable !== true && (
+            <p className="muted small" style={{ margin: '0.25rem 0 0' }}>
+              {v.updateAvailable === false ? 'This server is up to date.' : 'No update check has completed yet.'} Update now becomes available when a newer version is found; use “Check for updates” to look again.
             </p>
           )}
           {!v.agentActive && (

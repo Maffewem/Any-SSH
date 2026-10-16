@@ -265,7 +265,9 @@ Redis for tickets, rate limits and revocation. Then a second instance behind the
 - **Update now and the update agent.** `sudo any-ssh web-update on` (or `auto-update on`) installs a systemd timer that
   runs `any-ssh update-poll` every 5 minutes. The app only records an admin's request in its database; the agent reads
   it with `docker compose exec` and runs the normal update. The Update now button stays disabled, with a hint, until the
-  agent has checked in. Admins can cancel a scheduled update from the same place.
+  agent has checked in and an update check has found a newer version (use **Check for updates**). The server refuses
+  the request otherwise, and the agent re-checks the registry before installing, so nothing is installed when there is
+  nothing newer. Admins can cancel a scheduled update from the same place.
 - **Warning before the restart.** A request is not run at once: it is scheduled 2 minutes ahead. At that moment everyone
   signed in sees a banner and open terminals print a notice. The update then runs at the agent's next check (up to 5
   minutes later) and takes a minute or two. A restart ends the in-memory SSH sessions, so terminals reconnect to a new
