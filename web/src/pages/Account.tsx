@@ -16,10 +16,10 @@ interface SessionInfo {
 
 const TABS = [
   { id: 'profile', label: 'Profile', blurb: 'Your name, email address and role.' },
-  { id: 'security', label: 'Security', blurb: 'Your password and two-factor authentication.' },
-  { id: 'trusted-ips', label: 'Trusted IP addresses', blurb: 'Restrict where sign-ins to your account are accepted from.' },
-  { id: 'devices', label: 'Devices', blurb: 'Browsers and apps currently signed in to your account.' },
-  { id: 'delete', label: 'Delete account', blurb: 'Permanently remove your account and the data it owns.' },
+  { id: 'security', label: 'Security', blurb: 'Your password and 2-step verification.' },
+  { id: 'trusted-ips', label: 'Trusted IP addresses', blurb: 'Control which IP addresses can sign in to your account without extra checks.' },
+  { id: 'devices', label: 'Devices', blurb: 'Browsers and apps where you’re currently signed in.' },
+  { id: 'delete', label: 'Delete account', blurb: 'Permanently delete your account and the data it owns.' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
@@ -30,7 +30,7 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
   return (
     <section>
       <div className="page-head">
-        <h1>Account</h1>
+        <h1>My account</h1>
       </div>
       <SubTabs label="Account sections" tabs={TABS} current={tab} onChoose={choose} />
       <p className="muted small">{TABS.find((t) => t.id === tab)?.blurb}</p>
@@ -49,13 +49,13 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
             <h2>Password</h2>
             {passwordDone !== null && (
               <p className="ok">
-                Password changed. {passwordDone > 0 ? `${passwordDone} other ${passwordDone === 1 ? 'device was' : 'devices were'} signed out.` : 'No other devices were signed in.'}
+                Your password was changed. {passwordDone > 0 ? `${passwordDone} other ${passwordDone === 1 ? 'device was' : 'devices were'} signed out.` : 'You weren’t signed in on any other devices.'}
               </p>
             )}
             <ChangePasswordForm onDone={(u, n) => (setPasswordDone(n ?? 0), onUserChange(u))} />
           </div>
           <div className="card settings-section">
-            <h2>Two-factor authentication</h2>
+            <h2>2-step verification</h2>
             <MfaSection user={user} onChange={async () => onUserChange((await get<{ user: User }>('/api/auth/me')).user)} />
           </div>
         </>
@@ -68,7 +68,7 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
       )}
       {tab === 'devices' && (
         <div className="card settings-section">
-          <h2>Signed-in devices</h2>
+          <h2>Devices where you’re signed in</h2>
           <Sessions />
         </div>
       )}
@@ -79,9 +79,9 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
             <DeleteAccountForm self username={user.username} mfaEnabled={user.mfaEnabled} onDeleted={() => window.location.reload()} />
           ) : (
             <>
-              <p className="muted">Permanently removes your account, SSH keys and servers. You will be asked how to handle servers shared with other people.</p>
+              <p className="muted">Permanently deletes your account, SSH keys and servers. If you’ve shared servers with other people, you’ll choose what happens to them.</p>
               <button className="danger-outline" onClick={() => setDeleting(true)}>
-                Delete my account…
+                Delete my account
               </button>
             </>
           )}
@@ -112,11 +112,11 @@ function ProfileForm({ user, onUserChange }: { user: User; onUserChange: (u: Use
       <Field label="Display name">
         <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
       </Field>
-      <Field label="Email" hint="Used for password reset links and security notices.">
+      <Field label="Email" hint="Used to send password reset links and security alerts.">
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
       </Field>
       {emailChanging && (
-        <Field label="Current password" hint="Needed to change where reset links are sent.">
+        <Field label="Current password" hint="Required to change your email address.">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
         </Field>
       )}
@@ -137,8 +137,8 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
   if (recoveryCodes) {
     return (
       <div>
-        <SecretOnce label="Save these recovery codes somewhere safe. Each works once if you lose your phone." value={recoveryCodes.join('\n')} />
-        <button onClick={() => setRecoveryCodes(null)}>I have saved them</button>
+        <SecretOnce label="Save these recovery codes somewhere safe. Each code can be used once if you lose access to your authenticator app." value={recoveryCodes.join('\n')} />
+        <button onClick={() => setRecoveryCodes(null)}>I’ve saved them</button>
       </div>
     );
   }
@@ -147,17 +147,17 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
     if (stage === 'disable' || stage === 'regenerate') {
       return (
         <Form
-          submit={stage === 'disable' ? 'Turn off two-factor' : 'Generate new codes'}
+          submit={stage === 'disable' ? 'Turn off 2-step verification' : 'Generate new codes'}
           danger={stage === 'disable'}
           onSubmit={async () => {
             if (stage === 'disable') {
               await post('/api/auth/mfa/disable', { password, code });
-              toast.success('Two-factor authentication turned off.');
+              toast.success('2-step verification turned off.');
               reset();
               await onChange();
             } else {
               const res = await post<{ recoveryCodes: string[] }>('/api/auth/mfa/recovery-codes', { password, code });
-              toast.success('New recovery codes generated. The old ones no longer work.');
+              toast.success('New recovery codes generated. Your old codes no longer work.');
               reset();
               setRecoveryCodes(res.recoveryCodes);
             }
@@ -166,7 +166,7 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
           <Field label="Password">
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
           </Field>
-          <Field label="Current 6-digit code">
+          <Field label="6-digit code from your authenticator app">
             <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" required />
           </Field>
           <button type="button" className="ghost" onClick={reset}>
@@ -177,11 +177,11 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
     }
     return (
       <div>
-        <p className="ok">On. You’ll be asked for a code from your authenticator app when you sign in.</p>
+        <p className="ok">2-step verification is on. When you sign in, you’ll be asked for a code from your authenticator app.</p>
         <div className="row">
-          <button onClick={() => setStage('regenerate')}>New recovery codes</button>
+          <button onClick={() => setStage('regenerate')}>Get new recovery codes</button>
           <button className="danger-outline" onClick={() => setStage('disable')}>
-            Turn off
+            Turn off 2-step verification
           </button>
         </div>
       </div>
@@ -191,9 +191,9 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
   if (stage === 'idle') {
     return (
       <div>
-        <p className="muted">Protect your account with an authenticator app (1Password, Authy, Google Authenticator, iOS Passwords…).</p>
+        <p className="muted">Add an extra layer of security to your account with an authenticator app, such as 1Password, Authy, Google Authenticator or Passwords on iOS.</p>
         <button className="primary" onClick={() => setStage('password')}>
-          Set up two-factor
+          Set up 2-step verification
         </button>
       </div>
     );
@@ -219,12 +219,12 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
 
   return (
     <div>
-      <p>Scan this with your authenticator app, then enter the code it shows.</p>
+      <p>Scan this QR code with your authenticator app, then enter the code it shows.</p>
       {enrol && (
         <div className="mfa-enrol">
           <img src={enrol.qr} alt="Authenticator QR code" width={220} height={220} />
           <p className="small muted">
-            Can’t scan? Enter this key: <code className="mono">{enrol.secret}</code>
+            Can’t scan the code? Enter this key instead: <code className="mono">{enrol.secret}</code>
           </p>
         </div>
       )}
@@ -232,7 +232,7 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
         submit="Turn on"
         onSubmit={async () => {
           const res = await post<{ recoveryCodes: string[] }>('/api/auth/mfa/enable', { code });
-          toast.success('Two-factor authentication turned on.');
+          toast.success('2-step verification turned on.');
           reset();
           setRecoveryCodes(res.recoveryCodes);
           await onChange();
@@ -280,9 +280,8 @@ function TrustedIps({ user }: { user: User }) {
   return (
     <div className="stack">
       <p className="muted">
-        List the networks you normally sign in from. When this is on, a sign-in or an active session from any other address is
-        either allowed with a notification or held until it is verified. Your address as the server sees it:{' '}
-        <code className="mono">{data.currentIp ?? 'unknown'}</code> {data.currentIpTrusted ? <span className="badge accent">trusted</span> : <span className="badge warn">not listed</span>}
+        Add the IP addresses or ranges you normally sign in from. When this is on, sign-ins from any other IP address are either allowed with an email notification or held until you verify them. Your current IP address:{' '}
+        <code className="mono">{data.currentIp ?? 'Unknown'}</code> {data.currentIpTrusted ? <span className="badge accent">trusted</span> : <span className="badge warn">not trusted</span>}
       </p>
       <ul className="list">
         {data.entries.map((e) => (
@@ -296,9 +295,9 @@ function TrustedIps({ user }: { user: User }) {
             </button>
           </li>
         ))}
-        {data.entries.length === 0 && <li className="muted">No addresses yet.</li>}
+        {data.entries.length === 0 && <li className="muted">No trusted IP addresses yet.</li>}
       </ul>
-      <Field label="Password" hint="Needed to add addresses or change this setting.">
+      <Field label="Password" hint="Required to add or remove IP addresses or change these settings.">
         <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
       </Field>
       <div className="row wrap">
@@ -309,26 +308,26 @@ function TrustedIps({ user }: { user: User }) {
         </button>
         <button
           disabled={!password || !data.currentIp || data.currentIpTrusted}
-          onClick={() => void run(() => post('/api/account/trusted-ips', { current: true, label: label || 'Added from this device', password }), 'Current address added.')}
+          onClick={() => void run(() => post('/api/account/trusted-ips', { current: true, label: label || 'Added from this device', password }), 'Your current IP address was added.')}
         >
-          Add current IP address
+          Add my current IP address
         </button>
       </div>
-      <Field label="Sign-ins from unlisted addresses">
+      <Field label="When someone signs in from another IP address">
         <select value={chosen} onChange={(e) => setPolicy(e.target.value as 'notify' | 'challenge')}>
-          <option value="notify">Allow and notify me by email</option>
+          <option value="notify">Allow it and email me</option>
           <option value="challenge" disabled={!data.canChallenge}>
-            Require verification with a code
+            Ask for a verification code
           </option>
         </select>
-        {!data.canChallenge && <small>Requires an email address or two-factor authentication on your account.</small>}
+        {!data.canChallenge && <small>Requires an email address or 2-step verification on your account.</small>}
       </Field>
       <div className="row wrap">
-        <button className="primary" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: true, policy: chosen }), 'Trusted address list saved.')}>
-          {data.enabled ? 'Save' : 'Turn on'}
+        <button className="primary" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: true, policy: chosen }), 'Trusted IP addresses saved.')}>
+          {data.enabled ? 'Save changes' : 'Turn on'}
         </button>
         {data.enabled && (
-          <button className="danger-outline" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: false, policy: chosen }), 'Trusted address list turned off.')}>
+          <button className="danger-outline" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: false, policy: chosen }), 'Trusted IP addresses turned off.')}>
             Turn off
           </button>
         )}
@@ -336,7 +335,7 @@ function TrustedIps({ user }: { user: User }) {
       </div>
       {error && <p className="error">{error}</p>}
       <p className="muted small">
-        If you lose access (for example, after your network address changes), an administrator can turn this off for your account.
+        If you’re locked out, for example because your IP address changed, an administrator can turn this off for your account.
       </p>
     </div>
   );
@@ -356,7 +355,7 @@ function Sessions() {
             <span className="small">{describeAgent(s.userAgent)}</span>
             <br />
             <span className="muted small">
-              {s.ip ?? 'unknown IP'} · last active {formatTime(s.lastSeenAt)}
+              {s.ip ?? 'Unknown IP address'} · Last active {formatTime(s.lastSeenAt)}
             </span>
           </span>
           {s.current ? (
@@ -374,9 +373,9 @@ function Sessions() {
       className="danger-outline"
       onClick={async () => {
         const ok = await confirm({
-          title: 'Sign out of all devices',
-          message: 'This includes the device you are using. All open terminals will close.',
-          confirmLabel: 'Sign out everywhere',
+          title: 'Sign out of all devices?',
+          message: 'You’ll be signed out everywhere, including on this device, and all open terminals will close.',
+          confirmLabel: 'Sign out of all devices',
           danger: true,
         });
         if (!ok) return;

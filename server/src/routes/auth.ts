@@ -25,7 +25,7 @@ import {
 } from '../totp.js';
 import { publicUser, type AppContext, type UserRow } from '../types.js';
 
-const GENERIC_LOGIN_ERROR = 'Invalid username or password.';
+const GENERIC_LOGIN_ERROR = 'The username or password isn’t correct.';
 
 const loginBody = z.object({
   username: z.string().trim().min(1).max(64),
@@ -145,7 +145,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
       // Too many bad codes: throw away the half-finished login so the password is needed again.
       if (fresh.locked_until && fresh.locked_until > Date.now()) sessions.destroyByHash(auth.session.id_hash);
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.mfa', outcome: 'failure', ip });
-      throw new HttpError(401, 'That code is not valid.', 'invalid_mfa');
+      throw new HttpError(401, 'That code isn’t valid.', 'invalid_mfa');
     }
 
     // New token after the second factor: the pre-MFA cookie value is never promoted.
@@ -176,7 +176,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
 
   app.get('/api/auth/me', async (req) => {
     const auth = req.auth;
-    if (!auth) throw new HttpError(401, 'You are not signed in.', 'unauthenticated');
+    if (!auth) throw new HttpError(401, 'You’re not signed in.', 'unauthenticated');
     if (auth.session.stage === 'mfa') return { mfaRequired: true };
     // A locked session learns only enough to draw the lock screen.
     if (auth.session.locked_at !== null) return { locked: true, username: auth.user.username, displayName: auth.user.display_name };
@@ -188,7 +188,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
   // Polled by the browser to decide when to show the lock screen. Not counted as activity.
   app.get('/api/auth/state', async (req) => {
     const auth = req.auth;
-    if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'You are not signed in.', 'unauthenticated');
+    if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'You’re not signed in.', 'unauthenticated');
     if (auth.session.locked_at !== null) return { locked: true };
     return { locked: false, msUntilLock: sessions.msUntilLock(auth.session) };
   });
@@ -226,7 +226,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
         clearSessionCookie(ctx, reply);
         throw new HttpError(401, 'Too many attempts. Sign in again.', 'unauthenticated');
       }
-      throw new HttpError(401, 'The password is incorrect.', 'invalid_credentials');
+      throw new HttpError(401, 'The password isn’t correct.', 'invalid_credentials');
     }
     sessions.unlock(session);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.unlock', ip });
@@ -239,11 +239,11 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (!(await verifyPassword(user.password_hash, body.currentPassword))) {
       recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.password_change', outcome: 'failure', ip: clientIp(req) });
-      throw badRequest('Current password is incorrect.');
+      throw badRequest('Your current password isn’t correct.');
     }
     const problem = checkPasswordPolicy(body.newPassword, user.username);
     if (problem) throw badRequest(problem);
-    if (body.newPassword === body.currentPassword) throw badRequest('Choose a different password.');
+    if (body.newPassword === body.currentPassword) throw badRequest('Choose a different password from your current one.');
 
     const now = Date.now();
     db.prepare(
@@ -291,9 +291,9 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (!(await verifyPassword(user.password_hash, body.password))) {
       recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.mfa_setup', outcome: 'failure', ip: clientIp(req) });
-      throw badRequest('Password is incorrect.');
+      throw badRequest('The password isn’t correct.');
     }
-    if (user.totp_enabled) throw badRequest('Two-factor authentication is already on.');
+    if (user.totp_enabled) throw badRequest('2-step verification is already on.');
     const secret = generateTotpSecret();
     db.prepare('UPDATE users SET totp_secret_enc = ?, totp_last_counter = NULL WHERE id = ?').run(
       box.seal(secret, totpContext(user.id)),
@@ -305,46 +305,46 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
   app.post('/api/auth/mfa/enable', async (req) => {
     const { user } = requireUser(req);
     const { code } = parse(z.object({ code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code') }), req.body);
-    if (user.totp_enabled) throw badRequest('Two-factor authentication is already on.');
-    if (!user.totp_secret_enc) throw badRequest('Begin two-factor setup first.');
-    if (!checkTotp(user, code)) throw badRequest('That code is not valid. Check the time on your device.');
+    if (user.totp_enabled) throw badRequest('2-step verification is already on.');
+    if (!user.totp_secret_enc) throw badRequest('Start 2-step verification setup first.');
+    if (!checkTotp(user, code)) throw badRequest('That code isn’t valid. Check that the time on your device is correct.');
     db.prepare('UPDATE users SET totp_enabled = 1, updated_at = ? WHERE id = ?').run(Date.now(), user.id);
     const recoveryCodes = issueRecoveryCodes(user.id);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.mfa_enable', ip: clientIp(req) });
-    notify(ctx, req.log, user, 'two-factor authentication was turned on');
+    notify(ctx, req.log, user, '2-step verification was turned on');
     return { recoveryCodes };
   });
 
   app.post('/api/auth/mfa/disable', async (req) => {
     const { user } = requireUser(req);
     const body = parse(confirmPasswordAndCodeBody, req.body);
-    if (!user.totp_enabled) throw badRequest('Two-factor authentication is not on.');
+    if (!user.totp_enabled) throw badRequest('2-step verification isn’t on.');
     if (!(await verifyPassword(user.password_hash, body.password)) || !checkTotp(user, body.code)) {
       recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.mfa_disable', outcome: 'failure', ip: clientIp(req) });
-      throw badRequest('Password or code is incorrect.');
+      throw badRequest('The password or code isn’t correct.');
     }
     db.prepare(
       'UPDATE users SET totp_enabled = 0, totp_secret_enc = NULL, totp_last_counter = NULL, updated_at = ? WHERE id = ?',
     ).run(Date.now(), user.id);
     db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').run(user.id);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.mfa_disable', ip: clientIp(req) });
-    notify(ctx, req.log, user, 'two-factor authentication was turned off');
+    notify(ctx, req.log, user, '2-step verification was turned off');
     return { ok: true };
   });
 
   app.post('/api/auth/mfa/recovery-codes', async (req) => {
     const { user } = requireUser(req);
     const body = parse(confirmPasswordAndCodeBody, req.body);
-    if (!user.totp_enabled) throw badRequest('Two-factor authentication is not on.');
+    if (!user.totp_enabled) throw badRequest('2-step verification isn’t on.');
     if (!(await verifyPassword(user.password_hash, body.password)) || !checkTotp(user, body.code)) {
       recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.recovery_codes_regenerate', outcome: 'failure', ip: clientIp(req) });
-      throw badRequest('Password or code is incorrect.');
+      throw badRequest('The password or code isn’t correct.');
     }
     const recoveryCodes = issueRecoveryCodes(user.id);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.recovery_codes_regenerate', ip: clientIp(req) });
-    notify(ctx, req.log, user, 'new two-factor recovery codes were generated (the old ones no longer work)');
+    notify(ctx, req.log, user, 'new 2-step verification recovery codes were generated, and your old codes no longer work');
     return { recoveryCodes };
   });
 
@@ -358,7 +358,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
 
   function heldSession(req: FastifyRequest) {
     const auth = requireUser(req, { allowIpChallenge: true, allowPendingPasswordChange: true });
-    if (auth.session.ip_challenge !== 1) throw badRequest('This sign-in does not need verifying.');
+    if (auth.session.ip_challenge !== 1) throw badRequest('This sign-in doesn’t need to be verified.');
     return auth;
   }
 
@@ -372,7 +372,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
 
   app.post('/api/auth/ip-challenge/send', challengeLimit, async (req) => {
     const { user, session } = heldSession(req);
-    if (!user.email) throw badRequest('No email address on this account. Use your authenticator app, or ask an administrator.');
+    if (!user.email) throw badRequest('This account doesn’t have an email address. Use your authenticator app, or ask an administrator for help.');
     const sent = sendChallengeCode(ctx, req.log, user, session);
     return { sent };
   });
@@ -396,7 +396,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
       if (res === 'exhausted') {
         audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.ip_challenge', outcome: 'failure', ip, details: { reason: 'too_many_attempts' } });
         sessions.destroyByHash(session.id_hash);
-        throw new HttpError(401, 'Too many wrong codes. Sign in again.', 'unauthenticated');
+        throw new HttpError(401, 'Too many incorrect codes. Sign in again.', 'unauthenticated');
       }
     }
     if (!ok) {
@@ -404,7 +404,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
       audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.ip_challenge', outcome: 'failure', ip });
       const fresh = getUser(user.id);
       if (fresh.locked_until && fresh.locked_until > Date.now()) sessions.destroyByHash(session.id_hash);
-      throw new HttpError(400, 'That code is not valid.', 'invalid_code');
+      throw new HttpError(400, 'That code isn’t valid.', 'invalid_code');
     }
     db.prepare('UPDATE sessions SET ip_challenge = 0 WHERE id_hash = ?').run(session.id_hash);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.ip_challenge', ip, details: { method } });

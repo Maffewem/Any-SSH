@@ -56,9 +56,9 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
   // Redeem first so a ticket is burned by any attempt, including a rejected one.
   const ticket = terminals.redeemTicket(token);
   const origin = req.headers.origin;
-  if (!origin || !config.allowedOrigins.includes(origin)) return fail('bad_origin', 'The request was blocked: it came from an unrecognised origin.');
+  if (!origin || !config.allowedOrigins.includes(origin)) return fail('bad_origin', 'The request was blocked because it came from an unrecognized source.');
   if (!auth || auth.session.stage !== 'full' || auth.session.ip_challenge === 1 || !ticket || ticket.sessionIdHash !== auth.session.id_hash) {
-    return fail('unauthorized', 'Not authorised. Reload and try again.');
+    return fail('unauthorized', 'You’re not authorized. Reload the page and try again.');
   }
   if (auth.session.locked_at !== null) return fail('session_locked', 'This session is locked. Unlock it and try again.');
   const user = auth.user;
@@ -136,7 +136,7 @@ class LiveSession implements LiveTerminal {
     this.unregister = ctx.terminals.add(this);
     this.sessionCheck = setInterval(() => {
       const state = ctx.sessions.state(this.sessionIdHash);
-      if (state === 'dead') this.close('Your session expired. Sign in again.');
+      if (state === 'dead') this.close('Your session has expired. Sign in again.');
       else this.setLocked(state === 'locked');
     }, SESSION_CHECK_MS);
   }
@@ -190,7 +190,7 @@ class LiveSession implements LiveTerminal {
     this.backpressured = false;
     this.ctx.audit.record({ ...this.auditBase, action: 'ssh.session_detach', details: { reason, keptMinutes: minutes } });
     if (!this.locked) this.shell?.resume();
-    this.detachTimer = setTimeout(() => this.close('Disconnected too long; the terminal was closed.'), minutes * 60_000);
+    this.detachTimer = setTimeout(() => this.close('You were disconnected for too long, so the terminal was closed.'), minutes * 60_000);
     this.detachTimer.unref();
   }
 
@@ -380,20 +380,20 @@ class LiveSession implements LiveTerminal {
         this.send({
           type: 'error',
           code: 'host_key_mismatch',
-          message: `HOST KEY CHANGED for ${server.host}. Expected ${pinned} but the server presented ${fingerprint}. This could be an attack. Connection refused.`,
+          message: `The fingerprint for ${server.host} has changed. Expected ${pinned} but the server presented ${fingerprint}. This could be an attack. The connection was blocked.`,
         });
         this.hostKeyRejected = true;
         return verify(false);
       }
       if (access === 'use') {
-        this.send({ type: 'error', code: 'host_key_unverified', message: 'The owner has not verified this server’s host key yet. Ask them to connect once first.' });
+        this.send({ type: 'error', code: 'host_key_unverified', message: 'The owner hasn’t verified this server’s fingerprint yet. Ask them to connect once first.' });
         this.hostKeyRejected = true;
         return verify(false);
       }
       void this.ask('hostkey', { type: 'hostkey', fingerprint, keyType, host: server.host, port: server.port }).then((reply) => {
         if (!reply?.accept) {
           this.hostKeyRejected = true;
-          this.send({ type: 'error', code: 'host_key_rejected', message: 'Host key not trusted. Connection cancelled.' });
+          this.send({ type: 'error', code: 'host_key_rejected', message: 'The server’s fingerprint wasn’t trusted, so the connection was canceled.' });
           return verify(false);
         }
         const now = Date.now();
@@ -505,7 +505,7 @@ async function loadCredentials(
   };
   const prompt = async () => {
     const reply = await askPassword({ type: 'password', username, host: server.host });
-    if (!reply) throw new Error('No password entered.');
+    if (!reply) throw new Error('Enter a password.');
     return { creds: { password: reply.password }, fingerprint: null, keyId: null };
   };
 
@@ -524,7 +524,7 @@ async function loadCredentials(
     case 'saved':
       if (server.auth_method === 'key') return fromStoredKey(server.key_id, server.owner_id);
       if (server.auth_method === 'password') {
-        if (!server.password_enc) throw new Error('No password is stored for this server.');
+        if (!server.password_enc) throw new Error('No password is saved for this server.');
         return { creds: { password: ctx.box.openString(server.password_enc, serverPasswordContext(server.id)) }, fingerprint: null, keyId: null };
       }
       return prompt();
@@ -532,10 +532,10 @@ async function loadCredentials(
 }
 
 function friendlyError(message: string): string {
-  if (/All configured authentication methods failed/i.test(message)) return 'Authentication failed. Check the username and credentials.';
-  if (/Timed out while waiting for handshake/i.test(message)) return 'Timed out connecting to the server.';
-  if (/ECONNREFUSED/.test(message)) return 'Connection refused by the server.';
-  if (/EHOSTUNREACH|ENETUNREACH/.test(message)) return 'Server is unreachable from Any-SSH.';
-  if (/ENOTFOUND|EAI_AGAIN/.test(message)) return 'Could not resolve that hostname.';
+  if (/All configured authentication methods failed/i.test(message)) return 'Sign-in failed. Check the username and credentials.';
+  if (/Timed out while waiting for handshake/i.test(message)) return 'The connection to the server timed out.';
+  if (/ECONNREFUSED/.test(message)) return 'The server refused the connection.';
+  if (/EHOSTUNREACH|ENETUNREACH/.test(message)) return 'Any-SSH can’t reach the server.';
+  if (/ENOTFOUND|EAI_AGAIN/.test(message)) return 'Couldn’t find that host name.';
   return message.slice(0, 300);
 }

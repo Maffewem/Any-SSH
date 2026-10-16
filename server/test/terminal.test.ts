@@ -228,7 +228,7 @@ describe('terminal over WebSocket', () => {
     const t2 = await openTerminal(owner);
     await t2.next((m) => m.type === 'error');
     const sent = (built.ctx.mailer as unknown as { sent?: { subject: string }[] }).sent;
-    if (sent) expect(sent.slice(mailBefore).filter((m) => /host key CHANGED/.test(m.subject)).length).toBeLessThanOrEqual(1);
+    if (sent) expect(sent.slice(mailBefore).filter((m) => /fingerprint .* has changed/.test(m.subject)).length).toBeLessThanOrEqual(1);
 
     // Accepting needs the exact fingerprint and the owner's password.
     expect((await owner.post(`/api/servers/${serverId}/host-key/accept`, { fingerprint: 'SHA256:other', password: 'x' })).status).toBe(409);

@@ -62,12 +62,12 @@ function checkCertificate(publicUrl: string): Promise<CertResult | null> {
       const notAfter = cert?.valid_to ? Date.parse(cert.valid_to) : NaN;
       const trusted = socket.authorized;
       socket.destroy();
-      if (!Number.isFinite(notAfter)) return resolve(fail('The server did not present a certificate.'));
+      if (!Number.isFinite(notAfter)) return resolve(fail('The server didn’t present a certificate.'));
       const issuer = cert.issuer?.O ?? cert.issuer?.CN ?? null;
       resolve({ ...base, notAfter, daysLeft: Math.floor((notAfter - Date.now()) / 86_400_000), issuer: typeof issuer === 'string' ? issuer : null, trusted, error: null });
     });
-    socket.once('timeout', () => (socket.destroy(), resolve(fail('Timed out connecting to the public address from this server.'))));
-    socket.once('error', (e) => resolve(fail(`Could not connect to the public address from this server (${e.message}).`)));
+    socket.once('timeout', () => (socket.destroy(), resolve(fail('The connection to the public address timed out.'))));
+    socket.once('error', (e) => resolve(fail(`Couldn’t connect to the public address (${e.message}).`)));
   });
 }
 
@@ -87,10 +87,10 @@ export function registerHealthRoutes(app: FastifyInstance, ctx: AppContext): voi
     try {
       const address = await resolveTarget(host, config.allowLoopbackTargets);
       const ms = await tcpLatency(address, port);
-      if (ms === null) return { reachable: false, latencyMs: null, error: 'No answer on that port (refused, filtered or timed out).', checkedAt };
+      if (ms === null) return { reachable: false, latencyMs: null, error: 'No response on that port. The connection was refused, blocked or timed out.', checkedAt };
       return { reachable: true, latencyMs: Math.round(ms), error: null, checkedAt };
     } catch (e) {
-      return { reachable: false, latencyMs: null, error: e instanceof Error ? e.message.slice(0, 200) : 'Could not be resolved.', checkedAt };
+      return { reachable: false, latencyMs: null, error: e instanceof Error ? e.message.slice(0, 200) : 'Couldn’t find that host.', checkedAt };
     }
   }
 

@@ -199,7 +199,7 @@ export class BackupService {
     const cfg = settings.backup;
     const target = this.target();
     if (this.busy || db.prepare("SELECT 1 FROM backup_runs WHERE outcome = 'running' AND started_at > ?").get(Date.now() - STALE_RUN)) {
-      throw new BackupConfigError('A backup is already running.');
+      throw new BackupConfigError('A backup is already in progress.');
     }
     this.busy = true;
     const id = randomUUID();
@@ -227,7 +227,7 @@ export class BackupService {
       const report = verifyDatabaseFile(snapshot, box);
       if (!report.ok) {
         const bad = report.checks.find((c) => !c.ok)!;
-        throw new Error(`The database failed its check (${bad.name}: ${bad.detail}), so it was not backed up.`);
+        throw new Error(`The database didn’t pass its check (${bad.name}: ${bad.detail}), so it wasn’t backed up.`);
       }
       let bytes: number;
       let sha256: string;
@@ -240,7 +240,7 @@ export class BackupService {
         sha256 = await sha256Of(outgoing);
       }
       const stored = await target.put(outgoing, name);
-      if (stored !== bytes) throw new Error(`The destination reports ${stored} bytes for a ${bytes} byte backup, so the upload is not trusted.`);
+      if (stored !== bytes) throw new Error(`The destination reports ${stored} bytes for a ${bytes} byte backup, so the upload can’t be trusted.`);
       try {
         await this.prune(target, cfg.keep);
       } catch (err) {
@@ -308,7 +308,7 @@ export class BackupService {
   /** Starts the scheduler: checks once a minute. Runs left "running" by a crash are closed as interrupted. */
   start(everyMs = 60_000): void {
     if (this.timer) return;
-    this.deps.db.prepare("UPDATE backup_runs SET outcome = 'failure', finished_at = ?, error = 'The server stopped while this backup was running.' WHERE outcome = 'running'").run(Date.now());
+    this.deps.db.prepare("UPDATE backup_runs SET outcome = 'failure', finished_at = ?, error = 'The server stopped while this backup was in progress.' WHERE outcome = 'running'").run(Date.now());
     this.timer = setInterval(() => void this.tick(), everyMs);
     this.timer.unref();
   }

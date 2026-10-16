@@ -90,7 +90,7 @@ export function registerSettingsRoutes(app: FastifyInstance, ctx: AppContext): v
     const { user } = requireAdmin(req);
     const { to } = parse(z.object({ to: emailSchema.optional() }), req.body ?? {});
     const address = to ?? user.email;
-    if (!address) throw badRequest('Add an email address to your account, or enter one to send the test to.');
+    if (!address) throw badRequest('Add an email address to your account, or enter one to send the test email to.');
     const auditBase = { actorId: user.id, actorUsername: user.username, action: 'admin.settings_mail_test', ip: clientIp(req) };
     try {
       await ctx.mailer.send(emails.test({ to: address, displayName: user.display_name, sentBy: user.username }));

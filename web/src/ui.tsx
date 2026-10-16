@@ -51,7 +51,7 @@ export function Form(props: { /** Resolve with `false` to abort without a confir
       {props.children}
       {error && <p className="error">{error}</p>}
       <button type="submit" className={props.danger ? 'danger' : 'primary'} disabled={busy}>
-        {busy ? 'Working…' : props.submit}
+        {busy ? 'Please wait…' : props.submit}
       </button>
     </form>
   );
@@ -80,7 +80,7 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
             setTimeout(() => setDone(false), 1500);
             toast.success('Copied to the clipboard.');
           },
-          () => toast.error('Could not copy. Select the text and copy it manually.'),
+          () => toast.error('Couldn’t copy. Select the text and copy it manually.'),
         );
       }}
     >
@@ -94,7 +94,7 @@ export function SecretOnce({ label, value }: { label: string; value: string }) {
   return (
     <div className="secret-once">
       <p>
-        <strong>{label}</strong> It will not be shown again.
+        <strong>{label}</strong> It won’t be shown again.
       </p>
       <div className="row">
         <code className="secret">{value}</code>

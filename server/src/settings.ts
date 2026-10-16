@@ -72,7 +72,7 @@ export const maintenanceSettingsSchema = z.object({
   start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM'),
   durationMinutes: z.number().int().min(15).max(24 * 60),
   timezone: z.string().max(64).refine(validTimezone, 'Unknown timezone (use a name like Europe/London)'),
-}).refine((m) => !m.enabled || m.days.length > 0, { message: 'Choose at least one day.', path: ['days'] });
+}).refine((m) => !m.enabled || m.days.length > 0, { message: 'Select at least one day.', path: ['days'] });
 
 export const settingContext = (id: string) => `setting:${id}`;
 
@@ -85,11 +85,11 @@ export const sessionSettingsSchema = z
     maxHours: z.number().int().min(1).max(30 * 24),
   })
   .refine((s) => s.lockMinutes === 0 || s.lockMinutes < s.idleMinutes, {
-    message: 'The lock must come before the idle sign-out.',
+    message: 'The lock must come before the inactivity sign-out.',
     path: ['lockMinutes'],
   })
   .refine((s) => s.idleMinutes <= s.maxHours * 60, {
-    message: 'The idle sign-out cannot be longer than the session lifetime.',
+    message: 'The inactivity sign-out can’t be longer than the maximum session length.',
     path: ['idleMinutes'],
   });
 

@@ -156,7 +156,7 @@ export function TerminalSession(props: {
         // Offline or the server is restarting: keep trying to re-attach. Anything else is final.
         const transient = resume && (!(e instanceof ApiError) || e.status >= 500);
         if (transient) return lost();
-        t.writeln(`\r\n\x1b[31m${resume ? 'The terminal was closed while you were away. Use ↻ to start a new one.' : e instanceof Error ? e.message : String(e)}\x1b[0m`);
+        t.writeln(`\r\n\x1b[31m${resume ? 'The terminal was closed while you were away. Select ↻ to start a new one.' : e instanceof Error ? e.message : String(e)}\x1b[0m`);
         return props.onState('closed');
       }
       if (disposed) return;
@@ -247,16 +247,16 @@ export function TerminalSession(props: {
       <div className="pane-tools">
         {props.canSplit && (
           <>
-            <button title="Split to the right" aria-label="Split right" onClick={() => props.onSplit('row')}>
+            <button title="Split right" aria-label="Split right" onClick={() => props.onSplit('row')}>
               ◫
             </button>
-            <button title="Split below" aria-label="Split down" onClick={() => props.onSplit('col')}>
+            <button title="Split down" aria-label="Split down" onClick={() => props.onSplit('col')}>
               ⬓
             </button>
           </>
         )}
         {props.onClosePane && (
-          <button title="Close this pane" aria-label="Close pane" onClick={props.onClosePane}>
+          <button title="Close pane" aria-label="Close pane" onClick={props.onClosePane}>
             ✕
           </button>
         )}
@@ -284,18 +284,17 @@ export function TerminalSession(props: {
         ))}
       </div>
       {prompt?.kind === 'hostkey' && (
-        <Modal title="Verify host key" onClose={() => (send({ type: 'hostkey', accept: false }), setPrompt(null))}>
+        <Modal title="Verify the server’s fingerprint" onClose={() => (send({ type: 'hostkey', accept: false }), setPrompt(null))}>
           <p>
-            This is the first connection to <strong>{prompt.host}</strong>
-            {prompt.port !== 22 ? `:${prompt.port}` : ''}. Compare the fingerprint below with the one on the server itself
-            (run <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> there) before trusting it. Do not trust it unless you can confirm it.
+            This is your first time connecting to <strong>{prompt.host}</strong>
+            {prompt.port !== 22 ? `:${prompt.port}` : ''}. Before you trust it, compare the fingerprint below with the one on the server itself by running <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> there. Don’t trust it unless it matches.
           </p>
           <p className="fingerprint mono">
             {prompt.keyType}
             <br />
             {prompt.fingerprint}
           </p>
-          <p className="muted small">Once trusted, the key is pinned. Any change later is refused as a possible attack.</p>
+          <p className="muted small">After you trust it, Any-SSH saves this fingerprint and blocks the connection if it ever changes, because that could be a sign of an attack.</p>
           <div className="row">
             <button className="primary" onClick={() => (send({ type: 'hostkey', accept: true }), setPrompt(null))}>
               Trust and connect
@@ -305,19 +304,18 @@ export function TerminalSession(props: {
         </Modal>
       )}
       {prompt?.kind === 'hostkey_changed' && (
-        <Modal title="Host key changed: connection blocked" onClose={() => setPrompt(null)}>
+        <Modal title="Server fingerprint changed. Connection blocked." onClose={() => setPrompt(null)}>
           <p className="error">
             <strong>{prompt.host}</strong>
-            {prompt.port !== 22 ? `:${prompt.port}` : ''} is presenting a different host key from the one Any-SSH pinned. This can mean the
-            server was reinstalled, or that someone is intercepting the connection. Nothing was sent to it.
+            {prompt.port !== 22 ? `:${prompt.port}` : ''} is presenting a different fingerprint from the one Any-SSH saved. The server may have been reinstalled, or someone may be intercepting the connection. Nothing was sent to it.
           </p>
-          <p className="muted small">Pinned (trusted)</p>
+          <p className="muted small">Saved fingerprint (trusted)</p>
           <p className="fingerprint mono">
             {prompt.expectedType ?? ''}
             <br />
             {prompt.expected}
           </p>
-          <p className="muted small">Presented now</p>
+          <p className="muted small">Fingerprint the server presented</p>
           <p className="fingerprint mono">
             {prompt.presentedType}
             <br />
@@ -325,8 +323,8 @@ export function TerminalSession(props: {
           </p>
           <p className="muted small">
             {prompt.isOwner
-              ? 'If you did not re-key this server, do not accept it. To accept the new key, open Servers, choose Edit on this server and review the change (your password is required). The owner has been emailed.'
-              : 'Only the server’s owner can accept a new key. They have been emailed; tell them, and do not try to connect another way.'}
+              ? 'If you didn’t change this server’s keys, don’t accept the new fingerprint. To accept it, go to Servers, select Edit on this server, and review the change. Your password is required. The owner has been emailed.'
+              : 'Only the server’s owner can accept a new fingerprint. They’ve been emailed. Let them know, and don’t try to connect another way.'}
           </p>
           <div className="row">
             <button className="primary" onClick={() => setPrompt(null)}>
@@ -345,7 +343,7 @@ export function TerminalSession(props: {
               setPrompt(null);
             }}
           >
-            <Field label="Password" hint="Used for this connection only; not stored.">
+            <Field label="Password" hint="Used for this connection only and never saved.">
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" autoFocus required />
             </Field>
           </Form>

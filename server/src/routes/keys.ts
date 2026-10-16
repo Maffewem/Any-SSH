@@ -69,7 +69,7 @@ export function inspectPrivateKey(privateKey: string, passphrase?: string): { ty
   const parsed = utils.parseKey(privateKey, passphrase);
   if (parsed instanceof Error) throw badRequest(`Could not read that private key: ${parsed.message}`);
   const key = Array.isArray(parsed) ? parsed[0] : parsed;
-  if (!key || !key.isPrivateKey()) throw badRequest('That is a public key. Paste the private key instead.');
+  if (!key || !key.isPrivateKey()) throw badRequest('That’s a public key. Paste the private key instead.');
   const blob = key.getPublicSSH();
   const weakness = keyWeakness(key.type, blob);
   if (weakness) throw badRequest(weakness);
@@ -168,7 +168,7 @@ export function registerKeyRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (!(await verifyPassword(user.password_hash, password))) {
       recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ ...auditBase, outcome: 'failure', details: { name: key.name, reason: 'bad_password' } });
-      throw badRequest('Password is incorrect.');
+      throw badRequest('The password isn’t correct.');
     }
     const stored = JSON.parse(box.openString(key.private_key_enc, keyContext(key.id))) as StoredPrivateKey;
     audit.record({ ...auditBase, details: { name: key.name, fingerprint: key.fingerprint } });

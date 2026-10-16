@@ -3,6 +3,78 @@ import { formatTime, get, patch, post, type AuditEntry, type HostKeyRow, type Us
 import { Field, Form, Modal, SecretOnce, useAsync, useConfirm, useToast } from '../ui';
 import { DeleteAccountForm } from './DeleteAccount';
 
+/** Plain-language names for audit events; an unknown event falls back to its code. */
+const EVENT_LABELS: Record<string, string> = {
+  'admin.backup_keypair': 'Backup key pair generated',
+  'admin.backup_test': 'Backup destination tested',
+  'admin.ip_unlock': 'IP address unblocked',
+  'admin.servers_transfer': 'Servers transferred',
+  'admin.settings_change': 'Settings changed',
+  'admin.settings_mail_test': 'Test email sent',
+  'admin.settings_reset': 'Settings reset',
+  'admin.update_cancelled': 'Update canceled',
+  'admin.update_requested': 'Update requested',
+  'admin.user_create': 'User added',
+  'admin.user_delete': 'User deleted',
+  'admin.user_reset_mfa': '2-step verification reset',
+  'admin.user_reset_password': 'Password reset',
+  'admin.user_reset_trusted_ips': 'Trusted IP addresses reset',
+  'admin.user_sign_out': 'User signed out of all devices',
+  'admin.user_unlock': 'User unlocked',
+  'admin.user_update': 'User updated',
+  'auth.ip_challenge': 'IP address verification',
+  'auth.lock': 'Session locked',
+  'auth.lockout': 'Account locked after failed sign-ins',
+  'auth.login': 'Sign-in',
+  'auth.logout': 'Sign-out',
+  'auth.mfa': '2-step verification',
+  'auth.password_ok': 'Password accepted',
+  'auth.password_reset_request': 'Password reset requested',
+  'auth.session_revoke': 'Device signed out',
+  'auth.sign_out_everywhere': 'Signed out of all devices',
+  'auth.unlock': 'Session unlocked',
+  'auth.untrusted_ip': 'Sign-in from an untrusted IP address',
+  'backup.run': 'Backup',
+  'jump_host.create': 'Jump host added',
+  'jump_host.delete': 'Jump host removed',
+  'jump_host.host_key_forget': 'Jump host fingerprint removed',
+  'jump_host.pin': 'Jump host fingerprint saved',
+  'jump_host.test': 'Jump host tested',
+  'jump_host.update': 'Jump host updated',
+  'key.delete': 'SSH key deleted',
+  'key.export': 'SSH key exported',
+  'key.generate': 'SSH key generated',
+  'key.import': 'SSH key imported',
+  'server.create': 'Server added',
+  'server.delete': 'Server deleted',
+  'server.host_key_accept': 'New server fingerprint accepted',
+  'server.host_key_dismiss': 'New server fingerprint dismissed',
+  'server.host_key_forget': 'Server fingerprint removed',
+  'server.update': 'Server updated',
+  'setup.create_admin': 'Administrator account created',
+  'share.revoke': 'Sharing removed',
+  'ssh.connect': 'Connected to server',
+  'ssh.host_key_mismatch': 'Server fingerprint changed',
+  'ssh.host_key_trust': 'Server fingerprint trusted',
+  'ssh.session_detach': 'Terminal disconnected',
+  'ssh.session_end': 'Terminal closed',
+  'ssh.session_resume': 'Terminal reconnected',
+  'ssh.session_start': 'Terminal opened',
+  'system.master_key_rotate': 'Master key rotated',
+  'system.update': 'Software updated',
+  'user.account_delete': 'Account deleted',
+  'user.email_change': 'Email address changed',
+  'user.mfa_disable': '2-step verification turned off',
+  'user.mfa_enable': '2-step verification turned on',
+  'user.mfa_setup': '2-step verification setup started',
+  'user.password_change': 'Password changed',
+  'user.profile_update': 'Profile updated',
+  'user.recovery_codes_regenerate': 'Recovery codes regenerated',
+  'user.trusted_ip_add': 'Trusted IP address added',
+  'user.trusted_ip_remove': 'Trusted IP address removed',
+  'user.trusted_ip_settings': 'Trusted IP settings changed',
+};
+
 interface LinkResult {
   purpose: 'invite' | 'reset';
   sent: boolean;
@@ -12,15 +84,14 @@ interface LinkResult {
 
 function LinkResultView({ result, email }: { result: LinkResult; email: string | null }) {
   if (result.sent) {
-    return <p className="ok">{result.purpose === 'invite' ? 'An invite' : 'A password reset link'} was emailed to {email}.</p>;
+    return <p className="ok">{result.purpose === 'invite' ? 'An invitation' : 'A password reset link'} was emailed to {email}.</p>;
   }
   return (
     <div>
       <p className="muted small">
-        {result.error ?? 'Email is not configured on this server, so nothing was sent.'} Give them this single-use link over a channel you
-        trust:
+        {result.error ?? 'Email isn’t set up on this server, so nothing was sent.'} Share this single-use link with them through a secure channel:
       </p>
-      {result.url && <SecretOnce label="Link." value={result.url} />}
+      {result.url && <SecretOnce label="Single-use link." value={result.url} />}
     </div>
   );
 }
@@ -46,7 +117,7 @@ export function AdminUsersPage({ me }: { me: User }) {
               <th>User</th>
               <th>Role</th>
               <th>Status</th>
-              <th>2FA</th>
+              <th>2-step verification</th>
               <th>Last sign-in</th>
             </tr>
           </thead>
@@ -65,7 +136,7 @@ export function AdminUsersPage({ me }: { me: User }) {
                   ) : u.locked ? (
                     <span className="badge warn">Locked</span>
                   ) : u.mustChangePassword ? (
-                    <span className="badge">Pending first sign-in</span>
+                    <span className="badge">Invited – not signed in yet</span>
                   ) : (
                     'Active'
                   )}
@@ -97,8 +168,7 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
           {created.temporaryPassword ? (
             <>
               <p>
-                <strong>@{created.username}</strong> was created. Send them this temporary password over a channel you trust; they
-                must replace it when they first sign in.
+                <strong>@{created.username}</strong> was created. Share this temporary password with them through a secure channel. They’ll be asked to choose a new password when they first sign in.
               </p>
               <SecretOnce label="Temporary password." value={created.temporaryPassword} />
             </>
@@ -116,8 +186,8 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
         </div>
       ) : (
         <Form
-          submit="Create user"
-          success="User created."
+          submit="Add user"
+          success="User added."
           onSubmit={async () => {
             const res = await post<{ user: User; temporaryPassword?: string; invite?: LinkResult }>('/api/admin/users', {
               username,
@@ -134,7 +204,7 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
           <Field label="Display name">
             <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
           </Field>
-          <Field label="Email" hint="With an email, they get an invite link to set their own password. Without one, you get a temporary password to pass on.">
+          <Field label="Email" hint="If you enter an email address, we’ll send an invitation so they can create their own password. Otherwise, you’ll get a temporary password to share with them.">
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </Field>
           <Field label="Role">
@@ -162,11 +232,11 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
   const [deleting, setDeleting] = useState(false);
 
   const action = async (label: string, fn: () => Promise<unknown>) => {
-    if (!(await confirm({ title: `${label} for @${user.username}`, confirmLabel: label, danger: label !== 'Unlock' }))) return;
+    if (!(await confirm({ title: `${label} for @${user.username}?`, confirmLabel: label, danger: label !== 'Unlock' }))) return;
     setError(null);
     try {
       await fn();
-      toast.success(`${label} for @${user.username}: done.`);
+      toast.success(`${label} for @${user.username} completed.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -175,8 +245,8 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
   return (
     <Modal title={`@${user.username}`} onClose={onClose}>
       <Form
-        submit="Save"
-        success="User saved."
+        submit="Save changes"
+        success="User updated."
         onSubmit={async () => {
           const emailField = email.trim() !== (user.email ?? '') ? { email: email.trim() || null } : {};
           await patch(`/api/admin/users/${user.id}`, isSelf ? { displayName, ...emailField } : { displayName, ...emailField, role, status });
@@ -189,13 +259,13 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
         <Field label="Email">
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
-        <Field label="Role" hint={isSelf ? 'You cannot change your own role.' : undefined}>
+        <Field label="Role" hint={isSelf ? 'You can’t change your own role.' : undefined}>
           <select value={role} disabled={isSelf} onChange={(e) => setRole(e.target.value as User['role'])}>
             <option value="user">User</option>
             <option value="admin">Administrator</option>
           </select>
         </Field>
-        <Field label="Status" hint={isSelf ? undefined : 'Disabling signs them out and closes their terminals immediately.'}>
+        <Field label="Status" hint={isSelf ? undefined : 'Disabling a user signs them out and closes their terminals immediately.'}>
           <select value={status} disabled={isSelf} onChange={(e) => setStatus(e.target.value as User['status'])}>
             <option value="active">Active</option>
             <option value="disabled">Disabled</option>
@@ -211,12 +281,12 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
             {user.email && user.status === 'active' && (
               <button
                 onClick={() =>
-                  action(user.lastLoginAt ? 'Email a password reset link' : 'Resend the invite', async () => {
+                  action(user.lastLoginAt ? 'Email a password reset link' : 'Resend the invitation', async () => {
                     setLink(await post<LinkResult>(`/api/admin/users/${user.id}/send-link`));
                   })
                 }
               >
-                {user.lastLoginAt ? 'Email reset link' : 'Resend invite'}
+                {user.lastLoginAt ? 'Email password reset link' : 'Resend invitation'}
               </button>
             )}
             <button
@@ -229,12 +299,12 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
             >
               Reset password
             </button>
-            {user.mfaEnabled && <button onClick={() => action('Reset two-factor', () => post(`/api/admin/users/${user.id}/reset-mfa`))}>Reset 2FA</button>}
-            <button onClick={() => action('Turn off their trusted IP list', () => post(`/api/admin/users/${user.id}/reset-trusted-ips`))}>Reset trusted IPs</button>
+            {user.mfaEnabled && <button onClick={() => action('Reset 2-step verification', () => post(`/api/admin/users/${user.id}/reset-mfa`))}>Reset 2-step verification</button>}
+            <button onClick={() => action('Reset trusted IP addresses', () => post(`/api/admin/users/${user.id}/reset-trusted-ips`))}>Reset trusted IP addresses</button>
             {user.locked && <button onClick={() => action('Unlock', () => post(`/api/admin/users/${user.id}/unlock`))}>Unlock</button>}
-            <button onClick={() => action('Sign out of all devices', () => post(`/api/admin/users/${user.id}/sign-out`))}>Sign out all devices</button>
+            <button onClick={() => action('Sign out of all devices', () => post(`/api/admin/users/${user.id}/sign-out`))}>Sign out of all devices</button>
             <button className="danger-outline" onClick={() => setDeleting((d) => !d)}>
-              {deleting ? 'Cancel deletion' : 'Delete account…'}
+              {deleting ? 'Cancel' : 'Delete account'}
             </button>
           </div>
           {deleting && <DeleteAccountForm self={false} userId={user.id} username={user.username} onDeleted={onClose} />}
@@ -266,26 +336,26 @@ export function AuditPage() {
   return (
     <section>
       <div className="page-head">
-        <h1>Audit log</h1>
+        <h1>Activity log</h1>
         <button
           onClick={async () => {
             const r = await get<{ ok: boolean; checked: number; brokenAt: number | null }>('/api/admin/audit/verify');
-            setVerify(r.ok ? `Chain intact (${r.checked} entries).` : `Chain BROKEN at entry #${r.brokenAt}. The log has been tampered with.`);
+            setVerify(r.ok ? `The log is intact (${r.checked} entries checked).` : `The log may have been altered. A problem was found at entry #${r.brokenAt}.`);
           }}
         >
-          Verify integrity
+          Check log integrity
         </button>
       </div>
-      {verify && <p className={verify.startsWith('Chain intact') ? 'ok' : 'error'}>{verify}</p>}
+      {verify && <p className={verify.startsWith('The log is intact') ? 'ok' : 'error'}>{verify}</p>}
       <select className="search" value={filter} onChange={(e) => setFilter(e.target.value)}>
-        <option value="">All events</option>
+        <option value="">All activity</option>
         <option value="auth.">Sign-ins</option>
-        <option value="auth.lockout">Lockouts</option>
-        <option value="ssh.">SSH sessions</option>
+        <option value="auth.lockout">Account lockouts</option>
+        <option value="ssh.">Terminal sessions</option>
         <option value="share.">Sharing</option>
         <option value="server.">Servers</option>
         <option value="key.">Keys</option>
-        <option value="admin.">Administration</option>
+        <option value="admin.">Admin actions</option>
         <option value="system.">Software updates</option>
         <option value="user.">Account changes</option>
       </select>
@@ -294,12 +364,12 @@ export function AuditPage() {
         <table className="small">
           <thead>
             <tr>
-              <th>#</th>
+              <th>No.</th>
               <th>Time</th>
-              <th>Who</th>
-              <th>Event</th>
+              <th>User</th>
+              <th>Activity</th>
               <th>Details</th>
-              <th>IP</th>
+              <th>IP address</th>
             </tr>
           </thead>
           <tbody>
@@ -309,8 +379,8 @@ export function AuditPage() {
                 <td>{formatTime(e.ts)}</td>
                 <td>{e.actorUsername ?? '—'}</td>
                 <td>
-                  {e.action}
-                  {e.outcome === 'failure' && <span className="badge warn">failed</span>}
+                  <span title={e.action}>{EVENT_LABELS[e.action] ?? e.action}</span>
+                  {e.outcome === 'failure' && <span className="badge warn">Failed</span>}
                 </td>
                 <td className="mono details">{Object.keys(e.details).length ? JSON.stringify(e.details) : ''}</td>
                 <td>{e.ip}</td>
@@ -319,7 +389,7 @@ export function AuditPage() {
           </tbody>
         </table>
       </div>
-      {entries.length > 0 && entries.length % 100 === 0 && <button onClick={more}>Load older</button>}
+      {entries.length > 0 && entries.length % 100 === 0 && <button onClick={more}>Show older activity</button>}
     </section>
   );
 }
@@ -332,7 +402,7 @@ export function HostKeysPage() {
         <h1>Host keys</h1>
       </div>
       <p className="muted small">
-        The key each saved server is pinned to. Only a server’s owner can accept a new key.
+        The fingerprint saved for each server. Only a server’s owner can accept a new fingerprint.
       </p>
       {error && <p className="error">{error}</p>}
       <div className="table-wrap card">
@@ -341,8 +411,8 @@ export function HostKeysPage() {
             <tr>
               <th>Server</th>
               <th>Owner</th>
-              <th>Pinned fingerprint</th>
-              <th>Trusted</th>
+              <th>Saved fingerprint</th>
+              <th>Trusted since</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -369,18 +439,18 @@ export function HostKeysPage() {
                   {h.hostKeyChange && (
                     <>
                       <br />
-                      <span className="error">Presented: {h.hostKeyChange.type ?? ''} {h.hostKeyChange.fingerprint}</span>
+                      <span className="error">Server now presents: {h.hostKeyChange.type ?? ''} {h.hostKeyChange.fingerprint}</span>
                     </>
                   )}
                 </td>
                 <td>{h.hostKey?.pinnedAt ? `${formatTime(h.hostKey.pinnedAt)}${h.hostKey.pinnedBy ? ` by ${h.hostKey.pinnedBy}` : ''}` : '—'}</td>
                 <td>
                   {h.hostKeyChange ? (
-                    <span className="badge warn">Key changed</span>
+                    <span className="badge warn">Fingerprint changed</span>
                   ) : !h.hostKey ? (
-                    <span className="badge">Not verified</span>
+                    <span className="badge">Not verified yet</span>
                   ) : h.conflict ? (
-                    <span className="badge warn">Conflicts with another pin</span>
+                    <span className="badge warn">Conflicts with another saved fingerprint</span>
                   ) : (
                     'OK'
                   )}

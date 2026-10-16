@@ -118,15 +118,15 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   app.addHook('onRequest', async (req) => {
     if (!req.url.startsWith('/api/')) return;
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-      if (req.headers[CSRF_HEADER] !== '1') throw new HttpError(403, 'The request was blocked: a required security header is missing.', 'csrf');
+      if (req.headers[CSRF_HEADER] !== '1') throw new HttpError(403, 'The request was blocked because a required security header is missing.', 'csrf');
       const origin = req.headers.origin;
-      if (origin && !config.allowedOrigins.includes(origin)) throw new HttpError(403, 'The request was blocked: it came from an unrecognised origin.', 'csrf');
+      if (origin && !config.allowedOrigins.includes(origin)) throw new HttpError(403, 'The request was blocked because it came from an unrecognized source.', 'csrf');
     }
     req.auth = sessions.resolve(sessionToken(ctx, req));
     // The lock screen's background state check is not activity; everything else is.
     if (req.auth?.session.stage === 'full' && req.url.split('?')[0] !== '/api/auth/state') sessions.touch(req.auth.session);
     if (req.auth?.session.stage === 'full') {
-      // Every request (and so every terminal WebSocket upgrade) is checked against the trusted IP list.
+      // Every request (and so every terminal WebSocket upgrade) is checked against the trusted IP addresses.
       checkSessionIp(ctx, req.log, req.auth.user, req.auth.session, clientIp(req));
     }
   });
@@ -137,12 +137,12 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
 
   app.setErrorHandler((err: Error & { statusCode?: number; code?: string }, req, reply) => {
     if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message, code: err.code });
-    if (err.statusCode === 429) return reply.status(429).send({ error: 'Too many requests. Slow down and try again.', code: 'rate_limited' });
+    if (err.statusCode === 429) return reply.status(429).send({ error: 'Too many requests. Wait a moment and try again.', code: 'rate_limited' });
     if (err.statusCode && err.statusCode >= 400 && err.statusCode < 500) {
       return reply.status(err.statusCode).send({ error: 'Bad request', code: err.code ?? 'bad_request' });
     }
     req.log.error(err);
-    return reply.status(500).send({ error: 'Something went wrong.', code: 'internal' });
+    return reply.status(500).send({ error: 'Something went wrong. Try again.', code: 'internal' });
   });
 
   app.get('/api/health', async () => ({ ok: true }));

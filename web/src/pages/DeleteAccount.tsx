@@ -60,8 +60,8 @@ export function DeleteAccountForm(props: { self: boolean; userId?: string; usern
       }}
     >
       <p>
-        {self ? 'Deleting your account permanently removes' : `Deleting @${username} permanently removes`} {data.keys} SSH key{data.keys === 1 ? '' : 's'},{' '}
-        {data.servers.length} server{data.servers.length === 1 ? '' : 's'}, all sharing settings and all signed-in sessions. This cannot be undone.
+        {self ? 'Deleting your account permanently deletes' : `Deleting @${username} permanently deletes`} {data.keys} SSH key{data.keys === 1 ? '' : 's'},{' '}
+        {data.servers.length} server{data.servers.length === 1 ? '' : 's'}, all sharing settings, and signs out every device. This can’t be undone.
       </p>
       {shared.length > 0 && (
         <>
@@ -79,11 +79,10 @@ export function DeleteAccountForm(props: { self: boolean; userId?: string; usern
             <p className="small">{others.size === 1 ? 'That person' : 'Those people'} will lose access if {shared.length === 1 ? 'it is' : 'they are'} deleted.</p>
           </div>
           <label className="check">
-            <input type="radio" name="shared-mode" checked={mode === 'transfer'} onChange={() => setMode('transfer')} /> Transfer the shared servers to another user
-            (including the saved keys they use)
+            <input type="radio" name="shared-mode" checked={mode === 'transfer'} onChange={() => setMode('transfer')} /> Transfer the shared servers to another user, including the saved keys they use
           </label>
           {mode === 'transfer' && (
-            <Field label="New owner" hint="Search by name or username. Servers that are not shared are still deleted.">
+            <Field label="New owner" hint="Search by name or username. Servers that aren’t shared are still deleted.">
               {target ? (
                 <span className="row">
                   <strong>{target.displayName}</strong> <span className="muted">@{target.username}</span>
@@ -104,10 +103,10 @@ export function DeleteAccountForm(props: { self: boolean; userId?: string; usern
             </Field>
           )}
           <label className="check">
-            <input type="radio" name="shared-mode" checked={mode === 'delete'} onChange={() => setMode('delete')} /> Delete the shared servers as well
+            <input type="radio" name="shared-mode" checked={mode === 'delete'} onChange={() => setMode('delete')} /> Delete the shared servers too
           </label>
           {mode === 'delete' && (
-            <Field label="Type “delete” to confirm" hint="This deletes the shared servers for everyone they are shared with.">
+            <Field label="Type “delete” to confirm" hint="The shared servers will be deleted for everyone they’re shared with.">
               <input value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="off" autoCapitalize="none" />
             </Field>
           )}
@@ -115,11 +114,11 @@ export function DeleteAccountForm(props: { self: boolean; userId?: string; usern
       )}
       {self && (
         <>
-          <Field label="Your password" hint="Needed to confirm that this is you.">
+          <Field label="Your password" hint="Required to confirm it’s you.">
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
           </Field>
           {props.mfaEnabled && (
-            <Field label="Authentication code">
+            <Field label="6-digit code from your authenticator app">
               <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" required />
             </Field>
           )}

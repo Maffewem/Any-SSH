@@ -28,10 +28,10 @@ export function parseTrustedEntry(raw: string): { value: string } | { error: str
   const text = raw.trim();
   const [addrPart, prefixPart, ...rest] = text.split('/');
   const addr = normaliseIp(addrPart);
-  if (!addr || rest.length) return { error: 'Enter an IP address (1.2.3.4 or 2001:db8::1) or a range such as 203.0.113.0/24.' };
+  if (!addr || rest.length) return { error: 'Enter an IP address (for example, 203.0.113.7) or a range (for example, 203.0.113.0/24).' };
   const family = isIP(addr) as 4 | 6;
   if (prefixPart === undefined) return { value: addr };
-  if (!/^\d{1,3}$/.test(prefixPart)) return { error: 'The range size after “/” must be a number.' };
+  if (!/^\d{1,3}$/.test(prefixPart)) return { error: 'The number after “/” must be a whole number.' };
   const prefix = Number(prefixPart);
   const max = family === 4 ? 32 : 128;
   if (prefix > max) return { error: `The range size for ${family === 4 ? 'IPv4' : 'IPv6'} can be at most /${max}.` };
@@ -104,8 +104,8 @@ export function checkSessionIp(
     log,
     user,
     hold
-      ? `a sign-in from ${shown}, which is not on your trusted IP list, was held until it is verified`
-      : `a sign-in from ${shown}, which is not on your trusted IP list${opts.verifiedByMfa ? ' (verified with your two-factor code)' : ''}`,
+      ? `a sign-in from ${shown}, which isn’t one of your trusted IP addresses, was held until it’s verified`
+      : `a sign-in from ${shown}, which isn’t one of your trusted IP addresses${opts.verifiedByMfa ? ' (verified with your 2-step verification code)' : ''}`,
   );
   return { challenged: hold || session.ip_challenge === 1 };
 }

@@ -70,14 +70,14 @@ export async function jumpCandidates(ctx: AppContext, server: ServerRow): Promis
   const all = ctx.db.prepare('SELECT * FROM jump_hosts WHERE enabled = 1').all() as JumpHostRow[];
   if (server.jump_mode === 'fixed') {
     const chosen = all.find((j) => j.id === server.jump_host_id);
-    if (!chosen) throw new JumpError('The jump host for this server is missing or disabled, so it cannot be reached directly.', 'unavailable');
+    if (!chosen) throw new JumpError('The jump host for this server was removed or turned off, so the server can’t be reached.', 'unavailable');
     return [chosen];
   }
   const usable = all.filter((j) => j.host_key_fingerprint);
-  if (!usable.length) throw new JumpError('No jump host is available. Ask an admin to add and verify one.', 'unavailable');
+  if (!usable.length) throw new JumpError('No jump host is available. Ask an administrator to add and verify one.', 'unavailable');
   const timed = await Promise.all(usable.map(async (j) => ({ j, ms: await measure(ctx, j) })));
   const reachable = timed.filter((t): t is { j: JumpHostRow; ms: number } => t.ms !== null).sort((a, b) => a.ms - b.ms);
-  if (!reachable.length) throw new JumpError('No jump host is reachable right now.', 'unavailable');
+  if (!reachable.length) throw new JumpError('No jump host is available right now.', 'unavailable');
   return reachable.map((t) => t.j);
 }
 
@@ -104,12 +104,12 @@ export async function openThroughJumpHost(
     | undefined;
   if (!current || !current.enabled) throw new JumpError(`Jump host ${jh.name} is no longer available.`, 'unavailable');
   const pinned = current.host_key_fingerprint;
-  if (!pinned) throw new JumpError(`The host key of jump host ${jh.name} has not been verified by an admin yet.`, 'host_key_unverified');
+  if (!pinned) throw new JumpError(`The fingerprint of jump host ${jh.name} hasn’t been verified by an administrator yet.`, 'host_key_unverified');
   const address = await resolveTarget(jh.host, ctx.config.allowLoopbackTargets);
   // The target is looked up and dialled by the jump host, so a name need not resolve here. A literal
   // address is still held to the same SSRF rules as a direct connection.
   if (!ctx.config.allowLoopbackTargets && isIP(target.host) !== 0 && isBlockedAddress(target.host)) {
-    throw new JumpError('That address cannot be reached through a jump host.', 'failed');
+    throw new JumpError('That address can’t be reached through a jump host.', 'failed');
   }
 
   const conn = new Client();
@@ -119,7 +119,7 @@ export async function openThroughJumpHost(
       conn.end();
       if (mismatch) {
         return reject(
-          new JumpError(`HOST KEY CHANGED for jump host ${jh.name}. Expected ${pinned} but it presented ${mismatch}. Connection refused.`, 'host_key_mismatch', mismatch),
+          new JumpError(`The fingerprint for jump host ${jh.name} has changed. Expected ${pinned} but it presented ${mismatch}. The connection was blocked.`, 'host_key_mismatch', mismatch),
         );
       }
       reject(err instanceof JumpError ? err : new JumpError(`Jump host ${jh.name}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300), 'failed'));
@@ -184,7 +184,7 @@ export async function testJumpHost(ctx: AppContext, jh: JumpHostRow): Promise<Ju
     conn.once('ready', () => finish({ authenticated: true }));
     conn.once('error', (err) => {
       if (result.hostKey === 'unpinned' || result.hostKey === 'mismatch') return finish();
-      finish({ error: /All configured authentication methods failed/i.test(err.message) ? 'The jump host refused the Any-SSH key. Add the public key to its authorized_keys.' : err.message.slice(0, 300) });
+      finish({ error: /All configured authentication methods failed/i.test(err.message) ? 'The jump host rejected the Any-SSH key. Add the public key to its authorized_keys file.' : err.message.slice(0, 300) });
     });
     conn.connect({
       host: address,

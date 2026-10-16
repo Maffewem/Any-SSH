@@ -24,14 +24,14 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   return (
-    <Shell title="Create the administrator">
+    <Shell title="Set up Any-SSH">
       <p className="muted">
-        This is a fresh install. Paste the one-time setup token printed in the server log, then choose the first administrator account.
+        Create the first administrator account. Paste the one-time setup token from the server log to confirm you own this server.
       </p>
       <Form
-        submit="Create administrator"
+        submit="Create account"
         onSubmit={async () => {
-          if (password !== confirm) throw new Error('Passwords do not match.');
+          if (password !== confirm) throw new Error('The passwords don’t match.');
           await post('/api/setup', { setupToken, username, password, ...(email ? { email } : {}) });
           onDone();
         }}
@@ -42,10 +42,10 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
         <Field label="Username">
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />
         </Field>
-        <Field label="Email" hint="Optional. Used for password resets and security notices.">
+        <Field label="Email" hint="Optional. Used to reset your password and send you security alerts.">
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
         </Field>
-        <Field label="Password" hint="At least 12 characters. A passphrase of several words works well.">
+        <Field label="Password" hint="Use at least 12 characters. A passphrase of several words works well.">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" required />
         </Field>
         <Field label="Confirm password">
@@ -78,15 +78,15 @@ export function IpChallengePage({ onDone, onLogout }: { onDone: (u: User) => voi
   const sendEmail = async () => {
     const res = await post<{ sent: boolean }>('/api/auth/ip-challenge/send');
     setEmailed(true);
-    setNote(res.sent ? 'We emailed you an 8-digit code.' : 'A code was sent a moment ago. Check your inbox, or wait a minute to ask again.');
+    setNote(res.sent ? 'We’ve emailed you an 8-digit code.' : 'We sent a code a moment ago. Check your inbox, or wait a minute and request another.');
   };
   return (
-    <Shell title="Verify this sign-in">
+    <Shell title="Verify it’s you">
       <p>
-        You are signing in from <code className="mono">{info.ip ?? 'an unknown address'}</code>, which is not on your trusted IP list.
-        Confirm it is you to continue.
+        We noticed a sign-in from <code className="mono">{info.ip ?? 'an unknown IP address'}</code>, which isn’t one of your trusted IP addresses.
+        Verify that it’s you to continue.
       </p>
-      {info.methods.length === 0 && <p className="error">There is no way to verify you on this account. Ask an administrator to reset your trusted IP list.</p>}
+      {info.methods.length === 0 && <p className="error">We can’t verify you on this account. Ask an administrator to reset your trusted IP addresses.</p>}
       {hasEmail && !emailed && !(hasTotp && !useRecovery) && (
         <button className="primary" onClick={() => void sendEmail().catch((e: unknown) => setNote(errorMessage(e)))}>
           Email me a code
@@ -116,7 +116,7 @@ export function IpChallengePage({ onDone, onLogout }: { onDone: (u: User) => voi
         )}
         {hasTotp && (
           <button className="link" onClick={() => (setUseRecovery(!useRecovery), setCode(''))}>
-            {useRecovery ? 'Use a code instead' : 'Use a recovery code'}
+            {useRecovery ? 'Use an authentication code instead' : 'Use a recovery code'}
           </button>
         )}
         <button className="link" onClick={onLogout}>
@@ -138,7 +138,7 @@ export function LoginPage({ mfaPending, onLoggedIn }: { mfaPending: boolean; onL
 
   if (stage === 'mfa') {
     return (
-      <Shell title="Two-factor authentication">
+      <Shell title="2-step verification">
         <Form
           submit="Verify"
           onSubmit={async () => {
@@ -158,7 +158,7 @@ export function LoginPage({ mfaPending, onLoggedIn }: { mfaPending: boolean; onL
           </Field>
         </Form>
         <button className="link" onClick={() => (setUseRecovery(!useRecovery), setCode(''))}>
-          {useRecovery ? 'Use authenticator code instead' : 'Use a recovery code'}
+          {useRecovery ? 'Use an authentication code instead' : 'Use a recovery code'}
         </button>
       </Shell>
     );
@@ -195,7 +195,7 @@ function ForgotForm({ onBack }: { onBack: () => void }) {
   return (
     <Shell title="Reset your password">
       {sent ? (
-        <p>If that account exists and has an email address, we’ve sent it a link to reset the password. The link expires in 30 minutes.</p>
+        <p>If an account matches and has an email address, we’ve sent a link to reset the password. The link expires in 30 minutes.</p>
       ) : (
         <Form
           submit="Email me a reset link"
@@ -232,18 +232,18 @@ export function TokenPage({ token, onDone }: { token: string; onDone: () => void
 
   if (error) {
     return (
-      <Shell title="Link not valid">
+      <Shell title="This link doesn’t work">
         <p className="error">{error}</p>
         <button className="link" onClick={onDone}>
-          Go to sign in
+          Go to Sign in
         </button>
       </Shell>
     );
   }
-  if (!info) return <div className="loading">Checking link…</div>;
+  if (!info) return <div className="loading">Checking your link…</div>;
   if (done) {
     return (
-      <Shell title="Password saved">
+      <Shell title="Password updated">
         <p>You can now sign in as <strong>{info.username}</strong>.</p>
         <button className="primary" onClick={onDone}>
           Sign in
@@ -254,19 +254,19 @@ export function TokenPage({ token, onDone }: { token: string; onDone: () => void
   return (
     <Shell title={info.purpose === 'invite' ? `Welcome, ${info.displayName}` : 'Choose a new password'}>
       <p className="muted">
-        {info.purpose === 'invite' ? 'Set a password for your new account' : 'Set a new password for'} <strong>{info.username}</strong>.
-        {info.purpose === 'reset' && ' This signs you out on every device.'}
+        {info.purpose === 'invite' ? 'Create a password for your new account' : 'Set a new password for'} <strong>{info.username}</strong>.
+        {info.purpose === 'reset' && ' You’ll be signed out on all devices.'}
       </p>
       <Form
         submit="Save password"
         onSubmit={async () => {
-          if (password !== confirm) throw new Error('Passwords do not match.');
+          if (password !== confirm) throw new Error('The passwords don’t match.');
           await post('/api/auth/token/complete', { token, newPassword: password });
           setDone(true);
         }}
       >
         <input type="text" value={info.username} autoComplete="username" readOnly hidden />
-        <Field label="New password" hint="At least 12 characters. A passphrase of several words works well.">
+        <Field label="New password" hint="Use at least 12 characters. A passphrase of several words works well.">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" autoFocus required />
         </Field>
         <Field label="Confirm password">
@@ -285,7 +285,7 @@ export function ChangePasswordForm({ onDone, submit = 'Change password' }: { onD
     <Form
       submit={submit}
       onSubmit={async () => {
-        if (newPassword !== confirm) throw new Error('New passwords do not match.');
+        if (newPassword !== confirm) throw new Error('The new passwords don’t match.');
         const res = await post<{ user: User; signedOutSessions?: number }>('/api/auth/password', { currentPassword, newPassword });
         setCurrent('');
         setNew('');
@@ -296,7 +296,7 @@ export function ChangePasswordForm({ onDone, submit = 'Change password' }: { onD
       <Field label="Current password">
         <input type="password" value={currentPassword} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" required />
       </Field>
-      <Field label="New password" hint="At least 12 characters. Changing it signs out your other devices.">
+      <Field label="New password" hint="Use at least 12 characters. Changing it signs you out on your other devices.">
         <input type="password" value={newPassword} onChange={(e) => setNew(e.target.value)} autoComplete="new-password" required />
       </Field>
       <Field label="Confirm new password">
@@ -309,7 +309,7 @@ export function ChangePasswordForm({ onDone, submit = 'Change password' }: { onD
 export function ForcePasswordChangePage({ onDone, onLogout }: { onDone: (u: User) => void; onLogout: () => void }) {
   return (
     <Shell title="Choose a new password">
-      <p className="muted">Your administrator gave you a temporary password. Replace it with your own to continue.</p>
+      <p className="muted">Your administrator gave you a temporary password. Create your own password to continue.</p>
       <ChangePasswordForm onDone={onDone} submit="Save and continue" />
       <button className="link" onClick={onLogout}>
         Sign out

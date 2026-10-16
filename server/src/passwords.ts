@@ -46,12 +46,12 @@ export async function verifyDummy(password: string): Promise<void> {
 
 /** Returns a human-readable problem with the password, or null if acceptable. */
 export function checkPasswordPolicy(password: string, username?: string): string | null {
-  if (password.length < PASSWORD_MIN_LENGTH) return `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`;
-  if (password.length > PASSWORD_MAX_LENGTH) return `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`;
+  if (password.length < PASSWORD_MIN_LENGTH) return `Your password must be at least ${PASSWORD_MIN_LENGTH} characters.`;
+  if (password.length > PASSWORD_MAX_LENGTH) return `Your password can’t be longer than ${PASSWORD_MAX_LENGTH} characters.`;
   const lower = password.toLowerCase();
-  if (COMMON_PASSWORDS.has(lower)) return 'That password is too common.';
-  if (username && lower.includes(username.toLowerCase())) return 'Password must not contain your username.';
-  if (new Set(password).size < 5) return 'Password is too repetitive.';
+  if (COMMON_PASSWORDS.has(lower)) return 'That password is too common. Choose a different one.';
+  if (username && lower.includes(username.toLowerCase())) return 'Your password can’t contain your username.';
+  if (new Set(password).size < 5) return 'That password is too repetitive. Choose a different one.';
   return null;
 }
 

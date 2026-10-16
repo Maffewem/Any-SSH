@@ -95,28 +95,27 @@ export function VersionCard() {
       </div>
       {v.updateAvailable && (
         <p className="small" style={{ margin: '0.5rem 0 0' }}>
-          Build {short(v.latest?.commit ?? null)} is published. {v.autoUpdate ? 'Automatic updates are on and will install it.' : 'Run'}{' '}
-          {!v.autoUpdate && <code>sudo any-ssh update</code>} {!v.autoUpdate && 'on the server to install it (it backs up first).'}
+          A newer build ({short(v.latest?.commit ?? null)}) is available. {v.autoUpdate ? 'Automatic updates are on, so it will be installed for you.' : 'To install it, run'}{' '}
+          {!v.autoUpdate && <code>sudo any-ssh update</code>} {!v.autoUpdate && 'on the server. A backup is made first.'}
         </p>
       )}
       {v.pending ? (
         <div className="notice-row" role="status">
           <p className="small" style={{ margin: 0 }}>
-            {v.pending.trigger === 'auto' ? 'Automatic update' : `Update requested by ${v.pending.requestedBy}`} scheduled for {formatTime(v.pending.scheduledFor)}. Connected users have been
-            warned. The server backs up, installs and restarts within a few minutes of that time.
+            {v.pending.trigger === 'auto' ? 'Automatic update' : `Update requested by ${v.pending.requestedBy}`} scheduled for {formatTime(v.pending.scheduledFor)}. Connected users have been notified. Within a few minutes of that time, the server backs up, installs the update and restarts.
           </p>
           <button
             disabled={busy}
             onClick={async () => {
               const ok = await confirm({
-                title: 'Cancel the scheduled update',
-                message: 'Connected users will no longer be warned.',
+                title: 'Cancel the scheduled update?',
+                message: 'The update won’t be installed at the scheduled time, and connected users won’t be notified about it.',
                 confirmLabel: 'Cancel update',
                 danger: true,
               });
               if (ok) {
                 await run(() => del<VersionInfo>('/api/admin/version/update-now'));
-                toast.success('Scheduled update cancelled.');
+                toast.success('Scheduled update canceled.');
               }
             }}
           >
@@ -129,55 +128,55 @@ export function VersionCard() {
             <button
               disabled={busy || !v.agentActive || (v.checkEnabled && v.updateAvailable !== true)}
               onClick={() => setConfirming(true)}
-              title={!v.agentActive ? 'Needs the update agent on the server' : v.checkEnabled && v.updateAvailable !== true ? 'No newer version is known. Check for updates first.' : ''}
+              title={!v.agentActive ? 'Requires the update agent on the server' : v.checkEnabled && v.updateAvailable !== true ? 'No newer version has been found. Select “Check for updates” first.' : ''}
             >
               Update now
             </button>
           ) : (
             <p className="small" style={{ margin: 0 }}>
-              Warn everyone connected, then back up and restart in about {v.warningMinutes} minutes? Open terminals disconnect and reconnect on their own.{' '}
+              Notify everyone who is connected, then back up and restart in about {v.warningMinutes} minutes? Open terminals will disconnect and reconnect automatically.{' '}
               <button className="primary" disabled={busy} onClick={() => run(() => post<VersionInfo>('/api/admin/version/update-now'))}>
-                {busy ? 'Scheduling…' : 'Yes, update'}
+                {busy ? 'Scheduling…' : 'Update now'}
               </button>{' '}
               <button className="ghost" disabled={busy} onClick={() => setConfirming(false)}>
-                Never mind
+                Cancel
               </button>
             </p>
           )}
           {v.agentActive && v.checkEnabled && v.updateAvailable !== true && (
             <p className="muted small" style={{ margin: '0.25rem 0 0' }}>
-              {v.updateAvailable === false ? 'This server is up to date.' : 'No update check has completed yet.'} Update now becomes available when a newer version is found; use “Check for updates” to look again.
+              {v.updateAvailable === false ? 'This server is up to date.' : 'No update check has finished yet.'} “Update now” is available when a newer version is found. Select “Check for updates” to look again.
             </p>
           )}
           {!v.agentActive && (
             <p className="muted small" style={{ margin: '0.25rem 0 0' }}>
-              To enable this, run <code>sudo any-ssh web-update on</code> on the server once.
+              To turn this on, run <code>sudo any-ssh web-update on</code> on the server once.
             </p>
           )}
         </div>
       )}
       <p className="muted small" style={{ margin: '0.5rem 0 0' }}>
         {v.maintenance.enabled
-          ? `Maintenance window: ${v.maintenance.start} for ${v.maintenance.durationMinutes} min (${v.maintenance.timezone}); ${v.maintenance.open ? 'open now' : v.maintenance.nextStart ? `next opens ${formatTime(v.maintenance.nextStart)}` : 'closed'}.`
-          : 'No maintenance window set: automatic updates may install at any time (once a day).'}
+          ? `Maintenance window: ${v.maintenance.start} for ${v.maintenance.durationMinutes} minutes (${v.maintenance.timezone}). ${v.maintenance.open ? 'Open now.' : v.maintenance.nextStart ? `Next opens ${formatTime(v.maintenance.nextStart)}.` : 'Closed.'}`
+          : 'No maintenance window is set, so automatic updates can be installed at any time (once a day).'}
       </p>
       <p className="muted small" style={{ margin: '0.5rem 0 0' }}>
         {v.checkEnabled
-          ? `Checks ${v.image} every few hours${v.checkedAt ? `; last checked ${formatTime(v.checkedAt)}` : ''}.`
-          : 'Update checks are off (ANYSSH_UPDATE_CHECK=false).'}{' '}
-        {v.autoUpdate ? 'Automatic updates: on.' : 'Automatic updates: off (any-ssh auto-update on).'}
+          ? `Any-SSH checks ${v.image} for updates every few hours${v.checkedAt ? `. Last checked: ${formatTime(v.checkedAt)}` : ''}.`
+          : 'Update checks are turned off (ANYSSH_UPDATE_CHECK=false).'}{' '}
+        {v.autoUpdate ? 'Automatic updates: on.' : 'Automatic updates: off. To turn them on, run any-ssh auto-update on.'}
       </p>
-      {(error || v.error) && <p className="error small">{error ?? `Last check failed: ${v.error}`}</p>}
+      {(error || v.error) && <p className="error small">{error ?? `The last update check failed: ${v.error}`}</p>}
       <div className="subsection">
         <h3>Update history</h3>
-        {history.data && history.data.updates.length === 0 && <p className="muted small">No updates recorded yet.</p>}
+        {history.data && history.data.updates.length === 0 && <p className="muted small">No updates yet.</p>}
         {history.data && history.data.updates.length > 0 && (
           <div className="table-wrap" style={{ width: '100%' }}>
             <table className="small">
               <thead>
                 <tr>
                   <th>When</th>
-                  <th>Result</th>
+                  <th>Status</th>
                   <th>Version</th>
                   <th>Started by</th>
                 </tr>
@@ -193,7 +192,7 @@ export function VersionCard() {
                     <td>
                       {u.from} → {u.to}
                     </td>
-                    <td>{u.trigger === 'auto' ? 'Automatic update' : 'Manual'}</td>
+                    <td>{u.trigger === 'auto' ? 'Automatic' : 'Manual'}</td>
                   </tr>
                 ))}
               </tbody>

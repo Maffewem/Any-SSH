@@ -23,7 +23,7 @@ function RunLine({ run }: { run: BackupRunView }) {
     <tr>
       <td>{formatTime(run.startedAt)}</td>
       <td>
-        {run.outcome === 'success' ? <span className="badge accent">Stored</span> : run.outcome === 'running' ? <span className="badge">Running</span> : <span className="badge warn">Failed</span>}
+        {run.outcome === 'success' ? <span className="badge accent">Completed</span> : run.outcome === 'running' ? <span className="badge">Running</span> : <span className="badge warn">Failed</span>}
       </td>
       <td>{TRIGGER[run.trigger]}</td>
       <td>{run.encryption === 'none' ? <span className="badge warn">None</span> : ENCRYPTION[run.encryption]}</td>
@@ -114,23 +114,23 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
             className="ghost small"
             onClick={async () => {
               const ok = await confirm({
-                title: 'Turn off backups and forget settings',
-                message: 'Backups stop, and the destination, its credentials and the recovery public key are forgotten. Existing backups are not deleted.',
-                confirmLabel: 'Turn off and forget',
+                title: 'Remove backup destination?',
+                message: 'Scheduled backups will stop. The destination, its saved credentials and the recovery public key will be removed from Any-SSH. Backups already stored there are not deleted.',
+                confirmLabel: 'Remove destination',
                 danger: true,
               });
               if (ok) {
                 onSaved(await del<SettingsView>('/api/admin/settings/backup'), true);
-                toast.success('Backups turned off and settings forgotten.');
+                toast.success('Backup destination removed. Backups are off.');
               }
             }}
           >
-            Turn off and forget
+            Remove backup destination
           </button>
         )}
       </div>
       <p className="muted small">
-        Backups are checked, then encrypted before they leave this server, so storage that is lost or stolen reveals nothing. Choose how below.
+        Backups are verified and encrypted before they leave this server, so the data stays protected even if the storage is lost or stolen.
       </p>
 
       {status && (
@@ -138,15 +138,15 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
           <h3>Status</h3>
           <p className={status.last?.outcome === 'failure' || status.stale ? 'error' : undefined}>
             {!status.configured
-              ? 'Not set up yet.'
+              ? 'Backups aren’t set up yet.'
               : status.running
-                ? 'A backup is running…'
+                ? 'A backup is in progress…'
                 : status.last
-                  ? `Last backup ${status.last.outcome === 'success' ? 'stored' : 'FAILED'} ${formatTime(status.last.startedAt)}${status.last.outcome === 'success' ? ` (${size(status.last.bytes)})` : `: ${status.last.error}`}`
-                  : 'No backup has run yet.'}
+                  ? `Last backup ${status.last.outcome === 'success' ? 'completed' : 'failed'} ${formatTime(status.last.startedAt)}${status.last.outcome === 'success' ? ` (${size(status.last.bytes)})` : `: ${status.last.error}`}`
+                  : 'No backups have run yet.'}
           </p>
-          {status.stale && <p className="error">No successful backup for more than two schedule periods. Check the history below.</p>}
-          {status.scheduled && status.nextRunAt && <p className="muted small">Next scheduled: {formatTime(status.nextRunAt)} (if the server is off then, it runs when it is back).</p>}
+          {status.stale && <p className="error">There hasn’t been a successful backup for more than two scheduled periods. Review the history below.</p>}
+          {status.scheduled && status.nextRunAt && <p className="muted small">Next backup: {formatTime(status.nextRunAt)}. If the server is off at that time, the backup runs when it’s back on.</p>}
         </div>
       )}
 
@@ -159,9 +159,9 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
             b.encryption !== 'none' &&
             (kind === 's3' || kind === 'sftp') &&
             !(await confirm({
-              title: 'Send unencrypted backups to another provider',
-              message: 'Anyone with access to that storage can read the user list, password hashes, server addresses and audit log.',
-              confirmLabel: 'Send unencrypted copies',
+              title: 'Send unencrypted backups to another provider?',
+              message: 'Anyone with access to that storage can read user accounts, password hashes, server addresses and the activity log.',
+              confirmLabel: 'Send unencrypted backups',
               danger: true,
             }))
           ) {
@@ -192,41 +192,37 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
           <select value={encryption} onChange={(e) => setEncryption(e.target.value as BackupEncryption)}>
             <option value="recovery">Recovery key (most secure)</option>
             <option value="system">System-managed</option>
-            <option value="none">None (not recommended)</option>
+            <option value="none">No encryption (not recommended)</option>
           </select>
         </Field>
         {encryption === 'recovery' && (
           <p className="muted small">
-            Backups are encrypted to a recovery key. This server keeps only its public half, so neither this server nor the storage can read them. Keep the secret
-            half in a password manager, apart from the master key: you need both to restore.
+            Backups are encrypted with a recovery key. This server keeps only the public key, so neither this server nor the storage can read them. Store the secret key in a password manager, separate from the master key. You need both to restore a backup.
           </p>
         )}
         {encryption === 'system' && (
           <p className="muted small">
-            Backups are encrypted with a key derived from this server&rsquo;s master key, so there is no extra key to keep: the master key alone restores them. The
-            storage still cannot read them, but anyone who has both this server (or its master key) and a backup can. After rotating the master key, keep the old
-            one until older backups have aged out.
+            Backups are encrypted with a key derived from this server&rsquo;s master key, so there is no extra key to store. The master key alone can restore them. The storage can’t read them, but anyone who has both a backup and this server (or its master key) can. After you rotate the master key, keep the old one until older backups have been deleted.
           </p>
         )}
         {encryption === 'none' && (
           <div className="card">
             <p className="error">
-              <strong>Backups will not be encrypted.</strong> Anyone who can read the storage sees every account, password hash, server address and the audit log.
-              Saved SSH keys and passwords stay sealed with the master key, but nothing else is protected.
+              <strong>Backups won’t be encrypted.</strong> Anyone who can read the storage can see every account, password hash, server address and the activity log.
+              Saved SSH keys and passwords stay protected by the master key, but nothing else is.
             </p>
-            {(kind === 's3' || kind === 'sftp') && <p className="error">These copies go to another provider. Choose an encryption mode unless you trust that storage completely.</p>}
+            {(kind === 's3' || kind === 'sftp') && <p className="error">These backups are sent to another provider. Choose an encryption option unless you fully trust that storage.</p>}
             <label className="check">
-              <input type="checkbox" checked={acceptUnencrypted} onChange={(e) => setAcceptUnencrypted(e.target.checked)} /> I understand that backups will be stored
-              without encryption
+              <input type="checkbox" checked={acceptUnencrypted} onChange={(e) => setAcceptUnencrypted(e.target.checked)} /> I understand that backups will be stored without encryption
             </label>
           </div>
         )}
         {encryption === 'recovery' && (
           <>
-          <Field label="Recovery public key" hint="Backups are encrypted to this key. Generate a pair below, or run `any-ssh backup-key` on a trusted machine so the secret key never touches this server.">
+          <Field label="Recovery public key" hint="Backups are encrypted with this key. Generate key pair below, or run `any-ssh backup-key` on a trusted computer so the secret key never reaches this server.">
             <input value={publicKey} onChange={(e) => setPublicKey(e.target.value)} placeholder="anybak-pub-1-…" className="mono" autoComplete="off" />
           </Field>
-          {b.keyId && b.publicKey === publicKey.trim() && <p className="muted small">Key ID {b.keyId}. Check it matches the one saved with your secret key.</p>}
+          {b.keyId && b.publicKey === publicKey.trim() && <p className="muted small">Key ID: {b.keyId}. Make sure it matches the ID saved with your secret key.</p>}
           <div className="row wrap">
             <button
               type="button"
@@ -238,24 +234,24 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
                 toast.success('Key pair generated. Save the secret key now.');
               }}
             >
-              Generate a key pair
+              Generate key pair
             </button>
           </div>
           {generated && (
             <div className="card">
               <p>
-                <strong>Save this secret key now.</strong> It is shown once and is not stored here. Without it, no backup can ever be read.
+                <strong>Save this secret key now.</strong> It’s shown only once and isn’t stored on this server. Without it, your backups can’t be restored.
               </p>
               <textarea readOnly rows={3} value={generated.secretKey} className="mono" onFocus={(e) => e.target.select()} />
               <div className="row wrap">
                 <button type="button" onClick={() => downloadText('any-ssh-backup-secret-key.txt', `${generated.secretKey}\n`)}>
-                  Download as a file
+                  Download secret key
                 </button>
                 <label className="check">
-                  <input type="checkbox" checked={kept} onChange={(e) => setKept(e.target.checked)} /> I have saved it somewhere safe
+                  <input type="checkbox" checked={kept} onChange={(e) => setKept(e.target.checked)} /> I’ve saved the secret key in a safe place
                 </label>
                 <button type="button" className="ghost small" disabled={!kept} onClick={() => setGenerated(null)}>
-                  Hide
+                  Hide secret key
                 </button>
               </div>
             </div>
@@ -265,17 +261,17 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
 
         <Field label="Where to store backups">
           <select value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
-            <option value="none">Not enabled</option>
+            <option value="none">Not set up</option>
             <option value="s3">S3-compatible storage (AWS, Backblaze B2, Cloudflare R2, MinIO…)</option>
-            <option value="sftp">Another server over SFTP</option>
-            <option value="local">Local (this server)</option>
+            <option value="sftp">SFTP server</option>
+            <option value="local">This server (local folder)</option>
           </select>
         </Field>
 
         {kind === 's3' && (
           <>
             <div className="row2">
-              <Field label="Endpoint" hint="Leave empty for AWS S3. Otherwise https://host, with no path.">
+              <Field label="Endpoint" hint="Leave blank for Amazon S3. Otherwise enter https://host with no path.">
                 <input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://s3.eu-central-003.backblazeb2.com" />
               </Field>
               <Field label="Region">
@@ -295,7 +291,7 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
             </Field>
             <Field
               label="Secret access key"
-              hint={t.kind === 's3' && t.hasSecretKey ? 'One is saved. Leave empty to keep it. Changing the endpoint, region, bucket or key ID removes it, so enter it again.' : 'Stored encrypted; never shown again. Use a key that can only write to this bucket.'}
+              hint={t.kind === 's3' && t.hasSecretKey ? 'A secret access key is saved. Leave blank to keep it. If you change the endpoint, region, bucket or access key ID, you’ll need to enter it again.' : 'Stored encrypted and never shown again. Use a key that has write access to this bucket only.'}
             >
               <input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} autoComplete="new-password" placeholder={t.kind === 's3' && t.hasSecretKey ? '••••••••' : ''} />
             </Field>
@@ -323,16 +319,16 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
                 <input value={remotePath} onChange={(e) => setRemotePath(e.target.value)} required />
               </Field>
             </div>
-            <Field label="Server host key fingerprint" hint="SHA256:… Required before any connection is made. Save with it empty, press “Test destination”, and it shows the key the server presents so you can check it.">
+            <Field label="Server fingerprint" hint="Required before Any-SSH connects. To see the server’s fingerprint, leave this blank, save, then select “Test destination” and verify it.">
               <input value={fingerprint} onChange={(e) => setFingerprint(e.target.value)} className="mono" placeholder="SHA256:…" />
             </Field>
             <Field
               label="Password"
-              hint={t.kind === 'sftp' && t.hasPassword ? 'One is saved. Leave empty to keep it. Changing the server or username removes it.' : 'Stored encrypted; never shown again. Or use a private key below.'}
+              hint={t.kind === 'sftp' && t.hasPassword ? 'A password is saved. Leave blank to keep it. If you change the server or username, you’ll need to enter it again.' : 'Stored encrypted and never shown again. You can use a private key instead.'}
             >
               <input type="password" value={sftpPassword} onChange={(e) => setSftpPassword(e.target.value)} autoComplete="new-password" placeholder={t.kind === 'sftp' && t.hasPassword ? '••••••••' : ''} />
             </Field>
-            <Field label="Private key (optional)" hint={t.kind === 'sftp' && t.hasPrivateKey ? 'One is saved. Leave empty to keep it.' : 'Paste an unencrypted OpenSSH/PEM private key. Stored encrypted.'}>
+            <Field label="Private key (optional)" hint={t.kind === 'sftp' && t.hasPrivateKey ? 'A private key is saved. Leave blank to keep it.' : 'Paste an OpenSSH or PEM private key without a passphrase. It’s stored encrypted.'}>
               <textarea rows={3} value={sftpKey} onChange={(e) => setSftpKey(e.target.value)} className="mono" />
             </Field>
           </>
@@ -341,7 +337,7 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
         {kind !== 'none' && (
           <>
             <label className="check">
-              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Back up on a schedule
+              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Back up automatically
             </label>
             {enabled && (
               <>
@@ -354,13 +350,13 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
                     </select>
                   </Field>
                   {frequency !== 'hourly' && (
-                    <Field label="At (UTC hour)">
+                    <Field label="Hour (UTC)">
                       <input value={hourUtc} onChange={(e) => setHour(e.target.value)} inputMode="numeric" required />
                     </Field>
                   )}
                 </div>
                 {frequency === 'weekly' && (
-                  <Field label="On">
+                  <Field label="Day of the week">
                     <select value={weekday} onChange={(e) => setWeekday(e.target.value)}>
                       {WEEKDAYS.map((d, i) => (
                         <option key={d} value={i}>
@@ -372,27 +368,27 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
                 )}
               </>
             )}
-            <Field label="Backups to keep" hint="Older ones are deleted from the destination after each successful backup.">
+            <Field label="Backups to keep" hint="After each successful backup, older backups beyond this number are deleted from the destination.">
               <input value={keep} onChange={(e) => setKeep(e.target.value)} inputMode="numeric" required />
             </Field>
           </>
         )}
 
-        <Field label="Your password" hint="Needed to change where backups go or how they are encrypted.">
+        <Field label="Your password" hint="Required to change the backup destination or encryption.">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
         </Field>
       </Form>
 
       <div className="subsection">
-        <h3>Try it</h3>
-        <p className="muted small">Both use the saved settings. “Test” writes and deletes a small file; “Back up now” takes a real backup.</p>
+        <h3>Test and back up</h3>
+        <p className="muted small">Both use your saved settings. “Test destination” writes and deletes a small file. “Back up now” creates a real backup.</p>
         <div className="row wrap">
           <button
             disabled={busy}
             onClick={() =>
               action(async () => {
                 const r = await post<{ destination: string }>('/api/admin/backup/test');
-                return `Connected to ${r.destination} and wrote and removed a test file.`;
+                return `Connected to ${r.destination}. A test file was written and removed.`;
               })
             }
           >
@@ -404,8 +400,8 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
             onClick={() =>
               action(async () => {
                 const r = await post<{ run: BackupRunView }>('/api/admin/backup/run');
-                if (r.run.outcome !== 'success') throw new Error(r.run.error ?? 'The backup failed.');
-                return `Stored ${r.run.name} (${size(r.run.bytes)}).`;
+                if (r.run.outcome !== 'success') throw new Error(r.run.error ?? 'The backup didn’t complete.');
+                return `Backup saved: ${r.run.name} (${size(r.run.bytes)}).`;
               })
             }
           >
@@ -422,11 +418,11 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
               <thead>
                 <tr>
                   <th>When</th>
-                  <th>Result</th>
-                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Started by</th>
                   <th>Encryption</th>
                   <th>Size</th>
-                  <th>Location</th>
+                  <th>Destination</th>
                 </tr>
               </thead>
               <tbody>
@@ -440,11 +436,9 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
       )}
 
       <div className="subsection">
-        <h3>Restoring</h3>
+        <h3>Restore a backup</h3>
         <p className="muted small">
-          Restoring replaces the whole database, so it is done on the server, not from the browser: <code>sudo any-ssh restore &lt;backup file&gt; [secret key file]</code>. The
-          secret key file is only needed for recovery-key backups. It checks the backup first. Test a restore now and then with <code>any-ssh verify-backup</code>, which
-          changes nothing.
+          Restoring replaces the entire database, so it must be done on the server rather than in the browser: <code>sudo any-ssh restore &lt;backup file&gt; [secret key file]</code>. The secret key file is needed only for backups encrypted with a recovery key. The backup is checked before anything is replaced. To confirm a backup can be restored without changing anything, run <code>any-ssh verify-backup</code>.
         </p>
       </div>
     </div>

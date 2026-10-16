@@ -11,25 +11,25 @@ export function JumpHostsSection() {
     <div className="card settings-section">
       <div className="page-head">
         <h2>Jump hosts</h2>
-        <button onClick={() => setAdding((a) => !a)}>{adding ? 'Cancel' : 'Add a jump host'}</button>
+        <button onClick={() => setAdding((a) => !a)}>{adding ? 'Cancel' : 'Add jump host'}</button>
       </div>
       <p className="muted small">
-        A jump host (bastion) is a gateway for reaching servers on a private network.
+        A jump host (also called a bastion host) is a gateway for reaching servers on a private network.
       </p>
       <ul className="muted small">
         <li>
-          <strong>Privacy:</strong> a jump host only relays encrypted traffic; it never sees keys, passwords or keystrokes.
+          <strong>Privacy:</strong> a jump host only relays encrypted traffic. It never sees keys, passwords or anything you type.
         </li>
         <li>
-          <strong>Choosing:</strong> each server uses no jump host, a specific one, or the closest. A specific jump host never falls back to another route.
+          <strong>Routing:</strong> each server can connect directly, through a specific jump host, or through the closest one. A server set to a specific jump host never switches to another route.
         </li>
         <li>
-          <strong>Trust:</strong> a jump host can’t be used until you have verified its host key.
+          <strong>Verification:</strong> you can’t use a jump host until you’ve verified its fingerprint.
         </li>
       </ul>
       {error && <p className="error">{error}</p>}
       {adding && <AddJumpHost onDone={() => (setAdding(false), reload())} />}
-      {data?.jumpHosts.length === 0 && !adding && <p className="muted">No jump hosts have been added.</p>}
+      {data?.jumpHosts.length === 0 && !adding && <p className="muted">No jump hosts yet.</p>}
       {data?.jumpHosts.map((j) => <JumpHostRow key={j.id} jump={j} onChange={reload} />)}
     </div>
   );
@@ -60,7 +60,7 @@ function AddJumpHost({ onDone }: { onDone: () => void }) {
           <input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" required />
         </Field>
       </div>
-      <Field label="Account on the jump host" hint="Use a dedicated account with no other permissions. It only needs to forward connections.">
+      <Field label="Jump host username" hint="Use a dedicated account with no other permissions. It only needs to forward connections.">
         <input value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" required />
       </Field>
     </Form>
@@ -92,23 +92,21 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
     <div className="subsection">
       <p>
         <strong>{jump.name}</strong> <span className="mono muted">{jump.username}@{jump.host}{jump.port !== 22 ? `:${jump.port}` : ''}</span>{' '}
-        {!jump.enabled && <span className="badge warn">Disabled</span>}{' '}
-        {jump.hostKeyFingerprint ? <span className="badge">Host key verified</span> : <span className="badge warn">Host key not verified</span>}
-        {jump.serverCount > 0 && <span className="badge">{jump.serverCount} server{jump.serverCount === 1 ? '' : 's'} using it</span>}
+        {!jump.enabled && <span className="badge warn">Turned off</span>}{' '}
+        {jump.hostKeyFingerprint ? <span className="badge">Fingerprint verified</span> : <span className="badge warn">Fingerprint not verified</span>}
+        {jump.serverCount > 0 && <span className="badge">Used by {jump.serverCount} server{jump.serverCount === 1 ? '' : 's'}</span>}
       </p>
       <details>
         <summary className="muted small">Set up this jump host</summary>
         <p className="muted small">
-          Recommended: on the jump host, download and review the setup script, then run it. It creates a dedicated account that can only relay
-          connections (no shell, agent or X11 forwarding) and authorises the Any-SSH key. Add <code>--allow host:port</code> to limit it to specific destinations.
+          Recommended: on the jump host, download and review the setup script, then run it. The script creates a dedicated account that can only relay connections (no shell, agent forwarding or X11 forwarding) and authorizes the Any-SSH key. Add <code>--allow host:port</code> to limit it to specific destinations.
         </p>
         <div className="row">
           <code className="secret">{setupCommand}</code>
           <CopyButton text={setupCommand} />
         </div>
         <p className="muted small">
-          To set it up by hand instead, add this line to <code>~/.ssh/authorized_keys</code> for {jump.username} on the jump host.{' '}
-          <code>restrict,port-forwarding</code> limits the key to relaying connections.
+          To set it up manually instead, add this line to <code>~/.ssh/authorized_keys</code> for {jump.username} on the jump host. The <code>restrict,port-forwarding</code> options limit the key to relaying connections.
         </p>
         <div className="row">
           <code className="secret">{authorizedKeysLine}</code>
@@ -117,7 +115,7 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
       </details>
       {jump.hostKeyFingerprint && (
         <p className="muted small">
-          Verified host key: <code>{jump.hostKeyFingerprint}</code>
+          Verified fingerprint: <code>{jump.hostKeyFingerprint}</code>
         </p>
       )}
       <div className="row">
@@ -127,24 +125,24 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
             run(async () => setTest(await post<JumpTest>(`/api/admin/jump-hosts/${jump.id}/test`)))
           }
         >
-          Test
+          Test connection
         </button>
-        <button disabled={busy} onClick={() => run(async () => (await patch(`/api/admin/jump-hosts/${jump.id}`, { enabled: !jump.enabled }), onChange()), jump.enabled ? `${jump.name} disabled.` : `${jump.name} enabled.`)}>
-          {jump.enabled ? 'Disable' : 'Enable'}
+        <button disabled={busy} onClick={() => run(async () => (await patch(`/api/admin/jump-hosts/${jump.id}`, { enabled: !jump.enabled }), onChange()), jump.enabled ? `${jump.name} turned off.` : `${jump.name} turned on.`)}>
+          {jump.enabled ? 'Turn off' : 'Turn on'}
         </button>
         {jump.hostKeyFingerprint && (
           <button
             disabled={busy}
             onClick={async () =>
               (await confirm({
-                title: `Remove the verified host key for ${jump.name}`,
-                message: 'Terminals open through this jump host will close, and it cannot be used again until you verify a host key.',
-                confirmLabel: 'Remove host key',
+                title: `Remove the verified fingerprint for ${jump.name}?`,
+                message: 'Terminals open through this jump host will close. You won’t be able to use it again until you verify its fingerprint.',
+                confirmLabel: 'Remove fingerprint',
                 danger: true,
-              })) && run(async () => (await post(`/api/admin/jump-hosts/${jump.id}/forget-host-key`), setTest(null), onChange()), 'Verified host key removed.')
+              })) && run(async () => (await post(`/api/admin/jump-hosts/${jump.id}/forget-host-key`), setTest(null), onChange()), 'Verified fingerprint removed.')
             }
           >
-            Remove verified host key
+            Remove verified fingerprint
           </button>
         )}
         <button
@@ -152,8 +150,8 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
           disabled={busy}
           onClick={async () =>
             (await confirm({
-              title: `Delete jump host ${jump.name}`,
-              message: 'Terminals open through it will close. Servers set to use it will not connect until you choose another route; they never fall back to a direct connection.',
+              title: `Delete ${jump.name}?`,
+              message: 'Terminals open through this jump host will close. Servers set to use it won’t connect until you choose another route. They never switch to a direct connection automatically.',
               confirmLabel: 'Delete jump host',
               danger: true,
             })) && run(async () => (await del(`/api/admin/jump-hosts/${jump.id}`), onChange()), `${jump.name} deleted.`)
@@ -165,26 +163,26 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
       {message && <p className="error">{message}</p>}
       {test && (
         <div className="muted small">
-          {test.latencyMs !== null && <p>Reachable in {Math.round(test.latencyMs)} ms.</p>}
-          {test.latencyMs === null && <p className="error">Any-SSH could not reach this jump host.</p>}
+          {test.latencyMs !== null && <p>Connected in {Math.round(test.latencyMs)} ms.</p>}
+          {test.latencyMs === null && <p className="error">Any-SSH couldn’t connect to this jump host.</p>}
           {test.error && <p className="error">{test.error}</p>}
           {test.hostKey === 'unpinned' && test.fingerprint && (
             <>
               <p>
-                The jump host presented this host key. Confirm that it matches before trusting it (run this on the jump host: <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>):
+                The jump host presented this fingerprint. Make sure it matches before you trust it. To check, run this on the jump host: <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>
               </p>
               <p className="fingerprint mono">{test.fingerprint}</p>
               <button
                 className="primary"
                 disabled={busy}
-                onClick={() => run(async () => (await post(`/api/admin/jump-hosts/${jump.id}/pin`, { fingerprint: test.fingerprint }), setTest(null), onChange()), 'Host key verified.')}
+                onClick={() => run(async () => (await post(`/api/admin/jump-hosts/${jump.id}/pin`, { fingerprint: test.fingerprint }), setTest(null), onChange()), 'Fingerprint verified.')}
               >
-                Trust this host key
+                Trust this fingerprint
               </button>
             </>
           )}
-          {test.hostKey === 'mismatch' && <p className="error">WARNING: the host key has changed. The jump host presented {test.fingerprint}. Do not trust it unless you changed the jump host’s keys yourself.</p>}
-          {test.hostKey === 'match' && test.authenticated && <p className="ok">The host key matches and the jump host accepted the Any-SSH key. Checked {formatTime(Date.now())}.</p>}
+          {test.hostKey === 'mismatch' && <p className="error">The jump host’s fingerprint has changed. It presented {test.fingerprint}. Don’t trust it unless you changed the jump host’s keys yourself.</p>}
+          {test.hostKey === 'match' && test.authenticated && <p className="ok">The fingerprint matches and the jump host accepted the Any-SSH key. Checked {formatTime(Date.now())}.</p>}
         </div>
       )}
     </div>

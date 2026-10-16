@@ -32,7 +32,7 @@ function HostKey({ state }: { state: 'pinned' | 'unverified' | 'changed' }) {
   return state === 'pinned' ? (
     <span className="ok">Verified</span>
   ) : state === 'changed' ? (
-    <span className="error">CHANGED, connections refused</span>
+    <span className="error">Changed. Connections are blocked.</span>
   ) : (
     <span className="warn-text">Not verified yet</span>
   );
@@ -70,25 +70,25 @@ export function HealthPage() {
   return (
     <section>
       <div className="page-head">
-        <h1>Status</h1>
+        <h1>System status</h1>
         <button onClick={check} disabled={checking}>
-          {checking ? 'Checking…' : 'Check now'}
+          {checking ? 'Checking…' : 'Check again'}
         </button>
       </div>
       {error && <p className="error">{error}</p>}
       {health && s && (
         <>
           <p className={attention ? 'warn-text' : 'ok'}>
-            {attention ? 'Needs attention: ' : 'All good: '}
-            {s.reachable} of {s.servers - s.viaJumpHost} directly reachable
+            {attention ? 'Needs attention: ' : 'Everything looks good: '}
+            {s.reachable} of {s.servers - s.viaJumpHost} reachable directly
             {s.viaJumpHost > 0 ? `, ${s.viaJumpHost} via jump hosts` : ''}
-            {s.hostKeyChanged > 0 ? `, ${s.hostKeyChanged} with a changed host key` : ''}
+            {s.hostKeyChanged > 0 ? `, ${s.hostKeyChanged} with a changed fingerprint` : ''}
             {s.hostKeyUnverified > 0 ? `, ${s.hostKeyUnverified} not verified yet` : ''}
-            {s.jumpHostsDown > 0 ? `, ${s.jumpHostsDown} jump host${s.jumpHostsDown === 1 ? '' : 's'} down` : ''}.
+            {s.jumpHostsDown > 0 ? `, ${s.jumpHostsDown} jump host${s.jumpHostsDown === 1 ? '' : 's'} unreachable` : ''}.
           </p>
-          {s.noJumpHostAvailable && <p className="warn-text">Some servers are set to use the closest jump host, but none is enabled.</p>}
+          {s.noJumpHostAvailable && <p className="warn-text">Some servers are set to use the closest jump host, but no jump hosts are turned on.</p>}
 
-          <h2>This install</h2>
+          <h2>This installation</h2>
           <div className="card">
             <dl className="facts">
               <dt>Version</dt>
@@ -97,7 +97,7 @@ export function HealthPage() {
                 {health.app.commit ? ` (${health.app.commit.slice(0, 7)})` : ''}
                 {health.app.updateAvailable ? <span className="warn-text"> · update available</span> : null}
               </dd>
-              <dt>Running for</dt>
+              <dt>Uptime</dt>
               <dd>
                 {duration(health.app.uptimeSeconds)} · since {formatTime(health.app.startedAt)}
               </dd>
@@ -106,20 +106,20 @@ export function HealthPage() {
                 {health.app.terminals.open}
                 {health.app.terminals.detached > 0 ? ` (${health.app.terminals.detached} waiting to reconnect)` : ''}
               </dd>
-              <dt>Disk</dt>
+              <dt>Storage</dt>
               <dd>
-                {bytes(health.storage.freeBytes)} free of {bytes(health.storage.totalBytes)} · database {bytes(health.storage.databaseBytes)}
+                {bytes(health.storage.freeBytes)} free of {bytes(health.storage.totalBytes)} · Database: {bytes(health.storage.databaseBytes)}
               </dd>
               <dt>Certificate</dt>
               <dd>
                 {!cert ? (
-                  <span className="muted">Not checked (needs an https public address)</span>
+                  <span className="muted">Not checked. Requires a public HTTPS address.</span>
                 ) : cert.error ? (
                   <span className="muted">{cert.error}</span>
                 ) : (
                   <span className={cert.trusted === false || (cert.daysLeft ?? 0) < 14 ? 'error' : 'ok'}>
-                    {cert.host}: expires {formatTime(cert.notAfter)} ({cert.daysLeft} days)
-                    {cert.trusted === false ? ' · not trusted' : ''}
+                    {cert.host}: expires {formatTime(cert.notAfter)} ({cert.daysLeft} days left)
+                    {cert.trusted === false ? ' · Not trusted' : ''}
                   </span>
                 )}
               </dd>
@@ -129,9 +129,9 @@ export function HealthPage() {
                   <span className="muted">Not set up</span>
                 ) : (
                   <span className={health.backups.stale || health.backups.lastOutcome === 'failure' ? 'error' : ''}>
-                    Last success {formatTime(health.backups.lastSuccessAt)}
-                    {health.backups.stale ? ' · overdue' : ''}
-                    {health.backups.lastOutcome === 'failure' ? ' · last attempt failed' : ''}
+                    Last successful backup {formatTime(health.backups.lastSuccessAt)}
+                    {health.backups.stale ? ' · Overdue' : ''}
+                    {health.backups.lastOutcome === 'failure' ? ' · The last backup failed' : ''}
                   </span>
                 )}
               </dd>
@@ -140,7 +140,7 @@ export function HealthPage() {
 
           <h2>Jump hosts</h2>
           {health.jumpHosts.length === 0 ? (
-            <p className="muted">None set up.</p>
+            <p className="muted">No jump hosts yet.</p>
           ) : (
             <div className="table-wrap card">
               <table className="small">
@@ -148,7 +148,7 @@ export function HealthPage() {
                   <tr>
                     <th>Name</th>
                     <th>Reachability</th>
-                    <th>Host key</th>
+                    <th>Fingerprint</th>
                     <th>Servers</th>
                   </tr>
                 </thead>
@@ -157,7 +157,7 @@ export function HealthPage() {
                     <tr key={j.id}>
                       <td>
                         {j.name}
-                        {!j.enabled && <span className="badge">Disabled</span>}
+                        {!j.enabled && <span className="badge">Turned off</span>}
                         <br />
                         <span className="muted mono">
                           {j.host}:{j.port}
@@ -179,7 +179,7 @@ export function HealthPage() {
 
           <h2>Servers</h2>
           {health.servers.length === 0 ? (
-            <p className="muted">No servers saved yet.</p>
+            <p className="muted">No servers yet.</p>
           ) : (
             <div className="table-wrap card">
               <table className="small">
@@ -187,7 +187,7 @@ export function HealthPage() {
                   <tr>
                     <th>Server</th>
                     <th>Reachability</th>
-                    <th>Host key</th>
+                    <th>Fingerprint</th>
                     <th>Route</th>
                   </tr>
                 </thead>
@@ -207,7 +207,7 @@ export function HealthPage() {
                         <HostKey state={v.hostKey} />
                       </td>
                       <td>
-                        {v.route.mode === 'none' ? 'Direct' : v.route.mode === 'auto' ? 'Closest jump host' : `Via ${v.route.jumpHost ?? 'a missing jump host'}`}
+                        {v.route.mode === 'none' ? 'Direct connection' : v.route.mode === 'auto' ? 'Closest jump host' : `Via ${v.route.jumpHost ?? 'a jump host that was removed'}`}
                       </td>
                     </tr>
                   ))}
@@ -215,7 +215,7 @@ export function HealthPage() {
               </table>
             </div>
           )}
-          <p className="muted small">Last checked {formatTime(health.generatedAt)}.</p>
+          <p className="muted small">Last checked: {formatTime(health.generatedAt)}.</p>
         </>
       )}
     </section>

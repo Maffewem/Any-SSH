@@ -79,8 +79,7 @@ export function LockScreen(props: { displayName: string; username: string; onUnl
         </div>
         <h1>Session locked</h1>
         <p className="muted">
-          This session is locked. Enter the password for <strong>{props.displayName}</strong> (@{props.username}) to carry
-          on where you left off.
+          Your session is locked. Enter the password for <strong>{props.displayName}</strong> (@{props.username}) to continue where you left off.
         </p>
         <Form
           submit="Unlock"

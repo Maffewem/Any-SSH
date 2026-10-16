@@ -124,9 +124,9 @@ export function registerAccountLifecycleRoutes(app: FastifyInstance, ctx: AppCon
     if (!(await verifyPassword(user.password_hash, body.password)) || !checkSecondFactor(user, body.code)) {
       recordReauthFailure(ctx, req.log, clientIp(req), user);
       audit.record({ ...base, outcome: 'failure' });
-      throw badRequest('Password or code is incorrect.');
+      throw badRequest('The password or code isn’t correct.');
     }
-    if (user.role === 'admin' && activeAdminCount() <= 1) throw badRequest('You are the only administrator. Make someone else an administrator first.');
+    if (user.role === 'admin' && activeAdminCount() <= 1) throw badRequest('You’re the only administrator. Make someone else an administrator first.');
 
     const shared = owned(user.id).servers.filter((s) => s.sharedWith.length > 0);
     let transferred: { id: string; name: string }[] = [];
@@ -173,13 +173,13 @@ export function registerAccountLifecycleRoutes(app: FastifyInstance, ctx: AppCon
     const { confirm } = parse(z.object({ confirm: z.string().trim().max(20).optional() }), req.query);
     const target = findUser(id);
     if (!target) throw notFound('User not found');
-    if (target.id === admin.id) throw badRequest('Use your account page to delete your own account.');
+    if (target.id === admin.id) throw badRequest('To delete your own account, go to My account.');
     if (target.role === 'admin' && target.status === 'active' && activeAdminCount() <= 1) throw badRequest('There must be at least one active administrator.');
     const shared = owned(id).servers.filter((s) => s.sharedWith.length > 0);
     if (shared.length > 0 && confirm?.toLowerCase() !== 'delete') {
       throw new HttpError(400, 'This user owns servers that are shared with other people. Transfer them first, or type “delete” to delete them.', 'confirmation_required');
     }
-    removeAccount(target, 'Your account was removed.');
+    removeAccount(target, 'Your account was deleted.');
     audit.record({
       actorId: admin.id, actorUsername: admin.username, action: 'admin.user_delete', targetType: 'user', targetId: id,
       ip: clientIp(req), details: { username: target.username, deletedShared: shared.map((s) => s.name) },

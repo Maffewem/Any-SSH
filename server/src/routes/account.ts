@@ -63,7 +63,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
     assertIpAllowed(ctx, clientIp(req));
     const found = findToken(ctx, token);
     if (!found) recordAuthFailure(ctx, req.log, clientIp(req), 'reset');
-    if (!found) throw new HttpError(400, 'This link is invalid or has expired. Ask for a new one.', 'invalid_token');
+    if (!found) throw new HttpError(400, 'This link isn’t valid or has expired. Request a new one.', 'invalid_token');
     return { purpose: found.row.purpose, username: found.user.username, displayName: found.user.display_name };
   });
 
@@ -72,7 +72,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
     assertIpAllowed(ctx, clientIp(req));
     const found = findToken(ctx, body.token);
     if (!found) recordAuthFailure(ctx, req.log, clientIp(req), 'reset');
-    if (!found) throw new HttpError(400, 'This link is invalid or has expired. Ask for a new one.', 'invalid_token');
+    if (!found) throw new HttpError(400, 'This link isn’t valid or has expired. Request a new one.', 'invalid_token');
     const { row, user } = found;
     const problem = checkPasswordPolicy(body.newPassword, user.username);
     if (problem) throw badRequest(problem);
@@ -121,7 +121,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: AppContext): vo
       if (!(await verifyPassword(user.password_hash, body.password))) {
         recordReauthFailure(ctx, req.log, clientIp(req), user);
         audit.record({ actorId: user.id, actorUsername: user.username, action: 'user.email_change', outcome: 'failure', ip: clientIp(req) });
-        throw badRequest('Password is incorrect.');
+        throw badRequest('The password isn’t correct.');
       }
       if (body.email && db.prepare('SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND id != ?').get(body.email, user.id)) {
         throw new HttpError(409, 'That email address is already in use.', 'conflict');
