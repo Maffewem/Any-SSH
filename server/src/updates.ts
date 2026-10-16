@@ -64,6 +64,7 @@ export async function fetchPublishedImage(image: string, tag: string, fetchImpl:
   const getJson = async (url: string, accept?: string): Promise<{ body: any; type: string }> => {
     const headers: Record<string, string> = {};
     if (accept) headers.accept = accept;
+    headers['cache-control'] = 'no-cache';
     if (token) headers.authorization = `Bearer ${token}`;
     let res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(15_000) });
     if (res.status === 401 && !token) {
@@ -150,9 +151,13 @@ export class UpdateChecker {
     this.timer = null;
   }
 
-  /** Checks now. Concurrent callers share one request; results younger than 30 seconds are reused. */
-  check(): Promise<UpdateStatus> {
-    if (this.status.checkedAt && Date.now() - this.status.checkedAt < 30_000) return Promise.resolve(this.status);
+  /**
+   * Checks now. Concurrent callers share one request. Unless `force` is set (an administrator pressing the button),
+   * a successful result younger than 30 seconds is reused; failed checks are never reused.
+   */
+  check(opts: { force?: boolean } = {}): Promise<UpdateStatus> {
+    const fresh = this.status.checkedAt && !this.status.error && Date.now() - this.status.checkedAt < 30_000;
+    if (fresh && !opts.force) return Promise.resolve(this.status);
     this.inFlight ??= this.run().finally(() => (this.inFlight = null));
     return this.inFlight;
   }

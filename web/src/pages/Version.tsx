@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { del, errorMessage, formatTime, get, post } from '../api';
 import { useAsync, useConfirm, useToast } from '../ui';
 
@@ -46,6 +46,13 @@ export function VersionCard() {
   const [info, setInfo] = useState<VersionInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // Keep the page current (e.g. after the server restarts into a new build) without needing a manual reload.
+  useEffect(() => {
+    const id = setInterval(() => {
+      get<VersionInfo>('/api/admin/version').then(setInfo, () => {});
+    }, 30_000);
+    return () => clearInterval(id);
+  }, []);
   const v = info ?? data;
   if (!v) return null;
 
