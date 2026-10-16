@@ -148,12 +148,12 @@ export function registerJumpHostRoutes(app: FastifyInstance, ctx: AppContext): v
     const { id } = parse(idParam, req.params);
     const { fingerprint } = parse(pinBody, req.body);
     const j = find(id);
-    if (j.host_key_fingerprint) throw badRequest('A host key is already pinned. Forget it first to pin a different one.');
+    if (j.host_key_fingerprint) throw badRequest('A host key is already verified. Remove it first to verify a different one.');
     const probe = await testJumpHost(ctx, j);
     if (!probe.fingerprint) throw badRequest(probe.error ?? 'Could not reach the jump host.');
     if (probe.fingerprint !== fingerprint) {
       audit.record({ ...base, action: 'jump_host.pin', targetId: id, outcome: 'failure', details: { expected: fingerprint, presented: probe.fingerprint } });
-      throw badRequest('The jump host now presents a different host key than the one you checked. Nothing was pinned.');
+      throw badRequest('The jump host now presents a different host key from the one you checked. Nothing was saved.');
     }
     db.prepare('UPDATE jump_hosts SET host_key_fingerprint = ?, updated_at = ? WHERE id = ? AND host_key_fingerprint IS NULL').run(fingerprint, Date.now(), id);
     audit.record({ ...base, action: 'jump_host.pin', targetId: id, details: { name: j.name, fingerprint } });

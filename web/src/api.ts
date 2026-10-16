@@ -24,7 +24,7 @@ export interface SettingsView {
     from: string;
   };
   sessions: { source: 'environment' | 'web'; lockMinutes: number; idleMinutes: number; maxHours: number };
-  limits: { source: 'environment' | 'web'; maxTerminalsPerUser: number; detachMinutes: number };
+  limits: { source: 'environment' | 'web'; maxTerminalsPerUser: number; maxTerminalsPerAdmin: number | null; detachMinutes: number };
   security: {
     source: 'environment' | 'web';
     accountThreshold: number;

@@ -55,7 +55,7 @@ export function registerVersionRoutes(app: FastifyInstance, ctx: AppContext): vo
   app.post('/api/admin/version/update-now', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => {
     const { user } = requireAdmin(req);
     if (!ctx.updateRequests.agentActive()) {
-      throw badRequest('The update agent on the server is not running. Run "sudo any-ssh web-update on" on the server once, then try again.');
+      throw badRequest('The update agent is not running on the server. Run “sudo any-ssh web-update on” on the server once, then try again.');
     }
     const request = ctx.updateRequests.create(user.username, 'manual');
     if (!request) throw badRequest('An update is already scheduled.');

@@ -132,7 +132,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
 
   app.post('/api/auth/mfa', loginRateLimit, async (req, reply) => {
     const auth = req.auth;
-    if (!auth || auth.session.stage !== 'mfa') throw new HttpError(401, 'Sign in again', 'unauthenticated');
+    if (!auth || auth.session.stage !== 'mfa') throw new HttpError(401, 'Your session has ended. Sign in again.', 'unauthenticated');
     const body = parse(mfaBody, req.body);
     const ip = clientIp(req);
     assertIpAllowed(ctx, ip);
@@ -176,7 +176,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
 
   app.get('/api/auth/me', async (req) => {
     const auth = req.auth;
-    if (!auth) throw new HttpError(401, 'Not signed in', 'unauthenticated');
+    if (!auth) throw new HttpError(401, 'You are not signed in.', 'unauthenticated');
     if (auth.session.stage === 'mfa') return { mfaRequired: true };
     // A locked session learns only enough to draw the lock screen.
     if (auth.session.locked_at !== null) return { locked: true, username: auth.user.username, displayName: auth.user.display_name };
@@ -188,7 +188,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
   // Polled by the browser to decide when to show the lock screen. Not counted as activity.
   app.get('/api/auth/state', async (req) => {
     const auth = req.auth;
-    if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'Not signed in', 'unauthenticated');
+    if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'You are not signed in.', 'unauthenticated');
     if (auth.session.locked_at !== null) return { locked: true };
     return { locked: false, msUntilLock: sessions.msUntilLock(auth.session) };
   });
@@ -210,7 +210,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
   // and the idle sign-out and absolute lifetime still apply. Repeated failures end the session.
   app.post('/api/auth/unlock', loginRateLimit, async (req, reply) => {
     const auth = req.auth;
-    if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'Sign in again', 'unauthenticated');
+    if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'Your session has ended. Sign in again.', 'unauthenticated');
     const { user, session } = auth;
     if (session.locked_at === null) return { user: publicUser(user) };
     const { password } = parse(confirmPasswordBody, req.body);
@@ -226,7 +226,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
         clearSessionCookie(ctx, reply);
         throw new HttpError(401, 'Too many attempts. Sign in again.', 'unauthenticated');
       }
-      throw new HttpError(401, 'That password is not right.', 'invalid_credentials');
+      throw new HttpError(401, 'The password is incorrect.', 'invalid_credentials');
     }
     sessions.unlock(session);
     audit.record({ actorId: user.id, actorUsername: user.username, action: 'auth.unlock', ip });
@@ -306,7 +306,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const { user } = requireUser(req);
     const { code } = parse(z.object({ code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code') }), req.body);
     if (user.totp_enabled) throw badRequest('Two-factor authentication is already on.');
-    if (!user.totp_secret_enc) throw badRequest('Start setup first.');
+    if (!user.totp_secret_enc) throw badRequest('Begin two-factor setup first.');
     if (!checkTotp(user, code)) throw badRequest('That code is not valid. Check the time on your device.');
     db.prepare('UPDATE users SET totp_enabled = 1, updated_at = ? WHERE id = ?').run(Date.now(), user.id);
     const recoveryCodes = issueRecoveryCodes(user.id);

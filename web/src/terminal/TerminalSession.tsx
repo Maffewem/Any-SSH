@@ -288,7 +288,7 @@ export function TerminalSession(props: {
           <p>
             This is the first connection to <strong>{prompt.host}</strong>
             {prompt.port !== 22 ? `:${prompt.port}` : ''}. Compare the fingerprint below with the one on the server itself
-            (run <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> there) before trusting it. Don’t trust it if you can’t check.
+            (run <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> there) before trusting it. Do not trust it unless you can confirm it.
           </p>
           <p className="fingerprint mono">
             {prompt.keyType}

@@ -145,7 +145,7 @@ export const emails = {
         `Any-SSH, so the connection by ${p.attemptedBy} was refused.\n\n` +
         `Pinned:    ${p.expected}\nPresented: ${p.presented} (${p.presentedType})\n\n` +
         'If you reinstalled or re-keyed that server, check the new fingerprint on the server itself ' +
-        '(ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub) and accept it under Servers > Edit. ' +
+        '(ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub) and accept it under Servers → Edit. ' +
         'If not, someone may be intercepting connections to it: do not accept the new key.' +
         footer,
     };

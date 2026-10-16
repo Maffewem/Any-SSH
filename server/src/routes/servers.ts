@@ -554,8 +554,8 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       if (!live || live.serverId !== server.id) throw new HttpError(404, 'That terminal is no longer running.', 'session_gone');
       return { ticket: terminals.issueTicket({ userId: user.id, serverId: server.id, sessionIdHash: session.id_hash, access, credential: { type: 'saved' }, username: server.username, resume: body.resume }) };
     }
-    if (terminals.countForUser(user.id) >= ctx.settings.limits.maxTerminalsPerUser) {
-      throw new HttpError(429, 'You have too many open terminals. Close one first.', 'too_many_terminals');
+    if (terminals.countForUser(user.id) >= ctx.settings.terminalLimit(user.role)) {
+      throw new HttpError(429, 'You have reached the maximum number of open terminals for your account. Close one to open another.', 'too_many_terminals');
     }
 
     let credential: ConnectCredential;

@@ -161,7 +161,7 @@ backup() {
   local push=0 stamp path name
   if [ "${1:-}" = --push ]; then push=1; fi
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  # Encrypted (.anybak) when a recovery key is set in Settings -> Backups, otherwise a plain copy (.db).
+  # Encrypted (.anybak) when a recovery key is set in Settings → Backups, otherwise a plain copy (.db).
   path="$(dc exec -T app node dist/cli/backup.js file "/data/backups/any-ssh-$stamp")" || die "The backup failed. Run 'any-ssh logs' for details."
   name="$(basename "$path")"
   install -d -m 700 "$DIR/backups"
@@ -173,14 +173,14 @@ backup() {
     while read -r old; do rm -f "$DIR/backups/$old"; done
   say "Backup saved to $DIR/backups/$name"
   case "$name" in
-    *.db) echo "    Not encrypted: set a recovery key in Settings -> Backups to encrypt backups, here and off this server." ;;
+    *.db) echo "    Not encrypted: set a recovery key in Settings → Backups to encrypt backups, here and off this server." ;;
     *) echo "    Encrypted. Reading it needs the recovery secret key you saved, plus the master key to use what's inside." ;;
   esac
   if [ "$push" = 1 ]; then
     local rc=0
     dc exec -T app node dist/cli/backup.js run || rc=$?
     if [ "$rc" -eq 3 ]; then
-      echo "    No off-server destination is set up yet (Settings -> Backups)."
+      echo "    No off-server backup destination is configured (Settings → Backups)."
     elif [ "$rc" -ne 0 ]; then
       die "Storing the backup at the destination failed (see above)."
     fi

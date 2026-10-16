@@ -48,7 +48,7 @@ The installer adds an `any-ssh` command:
 | Command | What it does |
 | --- | --- |
 | `sudo any-ssh update` | Backs up, downloads the latest version and restarts. Open terminals drop and users reconnect, so pick a quiet time. |
-| `any-ssh update-log` | Shows the update history: every manual or automatic update, with result (updated, failed, rolled back), versions and who started it. Also kept in the app (Settings → Update history, and the audit log) and in `/opt/any-ssh/update.log`. |
+| `any-ssh update-log` | Shows the update history: every manual or automatic update, with result (updated, failed, rolled back), versions and who started it. Also kept in the app (Settings → Updates, and the audit log) and in `/opt/any-ssh/update.log`. |
 | `sudo any-ssh auto-update on` | Installs updates by itself, inside the maintenance window set in Settings (once a day at any time if none is set), only if a newer image was published. Users are warned first. `off` / `status` also work. Off by default. Re-run it once after upgrading from an older version so the new update agent timer replaces the old daily one. |
 | `sudo any-ssh web-update on` | Lets admins press **Update now** in Settings. Starts the update agent (see below). `off` / `status` also work. Off by default. |
 | `sudo any-ssh backup` | Saves a copy of the database to `/opt/any-ssh/backups` (the newest 14 are kept). Encrypted once a recovery key is set (see Backups). `--push` also stores one at the off-server destination. |
@@ -260,7 +260,7 @@ Redis for tickets, rate limits and revocation. Then a second instance behind the
   signed in sees a banner and open terminals print a notice. The update then runs at the agent's next check (up to 5
   minutes later) and takes a minute or two. A restart ends the in-memory SSH sessions, so terminals reconnect to a new
   one; the browser keeps retrying for about ten minutes, well beyond a normal restart.
-- **Maintenance window.** Settings → Maintenance window sets the days, start time, length and timezone (daylight saving
+- **Maintenance window.** Settings → Updates sets the days, start time, length and timezone (daylight saving
   is followed) in which *automatic* updates may be installed. Outside it, a new version is only flagged as available.
   The agent looks once per window, and an automatic update is not started if the window would close before the warning
   period ends. With no window set, automatic updates may run at any time, checked once a day. **Update now** is an

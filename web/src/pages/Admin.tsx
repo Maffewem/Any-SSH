@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { del, formatTime, get, patch, post, type AuditEntry, type HostKeyRow, type User } from '../api';
+import { formatTime, get, patch, post, type AuditEntry, type HostKeyRow, type User } from '../api';
 import { Field, Form, Modal, SecretOnce, useAsync } from '../ui';
+import { DeleteAccountForm } from './DeleteAccount';
 
 interface LinkResult {
   purpose: 'invite' | 'reset';
@@ -156,6 +157,7 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const action = async (label: string, fn: () => Promise<unknown>) => {
     if (!confirm(`${label} for @${user.username}?`)) return;
@@ -228,18 +230,12 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
             {user.mfaEnabled && <button onClick={() => action('Reset two-factor', () => post(`/api/admin/users/${user.id}/reset-mfa`))}>Reset 2FA</button>}
             <button onClick={() => action('Turn off their trusted IP list', () => post(`/api/admin/users/${user.id}/reset-trusted-ips`))}>Reset trusted IPs</button>
             {user.locked && <button onClick={() => action('Unlock', () => post(`/api/admin/users/${user.id}/unlock`))}>Unlock</button>}
-            <button
-              className="danger-outline"
-              onClick={() =>
-                action('Delete account (their keys and servers are deleted too)', async () => {
-                  await del(`/api/admin/users/${user.id}`);
-                  onClose();
-                })
-              }
-            >
-              Delete
+            <button onClick={() => action('Sign out of all devices', () => post(`/api/admin/users/${user.id}/sign-out`))}>Sign out all devices</button>
+            <button className="danger-outline" onClick={() => setDeleting((d) => !d)}>
+              {deleting ? 'Cancel deletion' : 'Delete account…'}
             </button>
           </div>
+          {deleting && <DeleteAccountForm self={false} userId={user.id} username={user.username} onDeleted={onClose} />}
         </div>
       )}
     </Modal>
