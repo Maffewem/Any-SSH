@@ -279,6 +279,18 @@ These are intentionally out of scope for this first pass:
 - Native iOS/macOS wrappers if the PWA hits limits (e.g. background sessions, hardware keyboard shortcuts).
 - External penetration test before exposing a deployment to the internet.
 
+## Tags and the status page
+
+Tags are plain labels on a saved server (up to 10, 32 characters each, letters, numbers, spaces and `. _ : / -`). They are
+metadata, not access control: everyone a server is shared with sees them, and the owner and managers can change them.
+Search runs in the browser over the servers the user can already see.
+
+The admin **Status** page (`/api/admin/health`) lists every saved server's name, host, owner and host key state, which
+admins can already see on the Host keys page, and no credentials. "Check now" opens a plain TCP connection to each distinct
+host and port from the server, using the same address checks as terminals (no loopback, link-local or metadata addresses),
+and sends no data. Servers that go through a jump host are not tested directly. The certificate check connects to the
+configured public address from the server itself, so behind NAT without hairpinning it may report that it cannot connect.
+
 ## Updates
 
 The only outbound call added for update checks is an anonymous, read-only request to the image registry (ghcr.io) for the

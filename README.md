@@ -10,7 +10,8 @@ Install it as an app from Safari ("Add to Home Screen") or Chrome.
 - **Email:** invites, "forgot password" reset links and security notices over SMTP (logged to the console in
   development).
 - **Settings page:** admins set SMTP (with a test email), session lock and timeout periods, and terminal limits in the app.
-- **Saved servers** with key, stored-password or ask-each-time authentication, and pinned host keys.
+- **Saved servers** with key, stored-password or ask-each-time authentication, pinned host keys, tags and search.
+- **Status page** (admins): reachability and latency of every host and jump host, host key state, version, uptime, disk and certificate expiry.
 - **SSH keys:** generate (Ed25519, ECDSA, RSA 4096) or import. Private keys are encrypted at rest, and only their owner
   can export one, after confirming their password.
 - **Sharing:** share a server with any number of people as *use* or *manage*, and choose whether they connect with the

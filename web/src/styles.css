@@ -191,3 +191,16 @@ td.details { max-width: 360px; overflow-wrap: anywhere; color: var(--muted); }
   font-size: 0.9rem;
   text-align: center;
 }
+
+/* Tags */
+.tags, .tag-filter { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.tags { margin-top: 0.5rem; }
+.tag-filter { margin-bottom: 1rem; }
+button.tag { font-size: 0.75rem; padding: 0.1rem 0.55rem; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+button.tag.on { color: var(--accent); border-color: var(--accent); }
+
+/* Status page */
+.warn-text { color: var(--warn); }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1.25rem; margin: 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }

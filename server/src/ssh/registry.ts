@@ -86,6 +86,13 @@ export class TerminalRegistry {
     return null;
   }
 
+  /** Terminals open right now, including ones kept alive for a re-attach. */
+  count(): { open: number; detached: number } {
+    let detached = 0;
+    for (const t of this.live) if (t.detached) detached++;
+    return { open: this.live.size, detached };
+  }
+
   countForUser(userId: string): number {
     let n = 0;
     for (const t of this.live) if (t.userId === userId) n++;

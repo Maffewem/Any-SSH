@@ -9,9 +9,26 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
   const [connecting, setConnecting] = useState<Server | null>(null);
   const [filter, setFilter] = useState('');
 
-  const servers = (data?.servers ?? []).filter((s) =>
-    `${s.name} ${s.host} ${s.username}`.toLowerCase().includes(filter.toLowerCase()),
-  );
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+
+  const all = data?.servers ?? [];
+  // Every tag in use on a server you can see, most used first.
+  const tagCounts = new Map<string, { label: string; n: number }>();
+  for (const s of all) {
+    for (const t of s.tags) {
+      const hit = tagCounts.get(t.toLowerCase());
+      if (hit) hit.n++;
+      else tagCounts.set(t.toLowerCase(), { label: t, n: 1 });
+    }
+  }
+  const knownTags = [...tagCounts.values()].sort((a, b) => b.n - a.n || a.label.localeCompare(b.label)).map((t) => t.label);
+  // Each word must match somewhere: name, host, user, notes, tags or the jump host.
+  const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
+  const servers = all.filter((s) => {
+    if (activeTag && !s.tags.some((t) => t.toLowerCase() === activeTag.toLowerCase())) return false;
+    const haystack = [s.name, s.host, s.username, s.notes, s.owner?.displayName ?? '', s.jump.host?.name ?? '', ...s.tags].join(' ').toLowerCase();
+    return words.every((w) => haystack.includes(w));
+  });
 
   return (
     <section>
@@ -22,8 +39,36 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
         </button>
       </div>
       {error && <p className="error">{error}</p>}
-      {data && data.servers.length > 4 && (
-        <input className="search" placeholder="Filter servers" value={filter} onChange={(e) => setFilter(e.target.value)} />
+      {all.length > 0 && (
+        <input
+          className="search"
+          type="search"
+          placeholder="Search by name, host, user, notes or tag"
+          aria-label="Search servers"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      )}
+      {knownTags.length > 0 && (
+        <div className="tag-filter" role="group" aria-label="Filter by tag">
+          {knownTags.map((t) => (
+            <button
+              key={t}
+              className={`tag ${activeTag?.toLowerCase() === t.toLowerCase() ? 'on' : ''}`}
+              aria-pressed={activeTag?.toLowerCase() === t.toLowerCase()}
+              onClick={() => setActiveTag(activeTag?.toLowerCase() === t.toLowerCase() ? null : t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+      {all.length > 0 && servers.length === 0 && (
+        <div className="empty card">
+          <p>No servers match.{' '}
+            <button className="ghost" onClick={() => (setFilter(''), setActiveTag(null))}>Clear search</button>
+          </p>
+        </div>
       )}
       {data && data.servers.length === 0 && (
         <div className="empty card">
@@ -57,6 +102,15 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
                   <span className="badge">{s.jump.mode === 'auto' ? 'Via closest jump host' : `Via ${s.jump.host?.name ?? 'missing jump host'}`}</span>
                 )}
               </div>
+              {s.tags.length > 0 && (
+                <div className="tags">
+                  {s.tags.map((t) => (
+                    <button key={t} className="tag" title={`Show servers tagged ${t}`} onClick={() => setActiveTag(t)}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="actions">
               <button className="primary" onClick={() => (s.credentials === 'own' ? setConnecting(s) : onConnect(s))}>
@@ -74,6 +128,7 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
       {editing && (
         <ServerForm
           server={editing === 'new' ? null : editing}
+          knownTags={knownTags}
           isAdmin={isAdmin}
           onClose={() => setEditing(null)}
           onSaved={() => (setEditing(null), reload())}
@@ -91,11 +146,16 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
   );
 }
 
+/** "prod, web" → ["prod", "web"]. The server tidies repeats and rejects anything unusable. */
+function parseTags(text: string): string[] {
+  return text.split(',').map((t) => t.trim()).filter(Boolean);
+}
+
 function authLabel(m: AuthMethod) {
   return m === 'key' ? 'SSH key' : m === 'password' ? 'Stored password' : 'Password on connect';
 }
 
-function ServerForm({ server, isAdmin, onClose, onSaved }: { server: Server | null; isAdmin: boolean; onClose: () => void; onSaved: () => void }) {
+function ServerForm({ server, knownTags, isAdmin, onClose, onSaved }: { server: Server | null; knownTags: string[]; isAdmin: boolean; onClose: () => void; onSaved: () => void }) {
   const isOwner = !server || server.access === 'owner';
   const keys = useAsync(() => (isOwner ? get<{ keys: SshKey[] }>('/api/keys') : Promise.resolve({ keys: [] })), []);
   const [name, setName] = useState(server?.name ?? '');
@@ -106,6 +166,7 @@ function ServerForm({ server, isAdmin, onClose, onSaved }: { server: Server | nu
   const [keyId, setKeyId] = useState(server?.key?.id ?? '');
   const [password, setPassword] = useState('');
   const [notes, setNotes] = useState(server?.notes ?? '');
+  const [tags, setTags] = useState((server?.tags ?? []).join(', '));
   const [jumpMode, setJumpMode] = useState<JumpMode>(server?.jump.mode ?? 'none');
   const [jumpHostId, setJumpHostId] = useState(server?.jump.host?.id ?? '');
   const jumpHosts = useAsync(() => (isOwner && isAdmin ? get<{ jumpHosts: JumpHost[] }>('/api/admin/jump-hosts') : Promise.resolve({ jumpHosts: [] })), []);
@@ -115,10 +176,10 @@ function ServerForm({ server, isAdmin, onClose, onSaved }: { server: Server | nu
 
   const save = async () => {
     if (!isOwner) {
-      await patch(`/api/servers/${server!.id}`, { name, notes });
+      await patch(`/api/servers/${server!.id}`, { name, notes, tags: parseTags(tags) });
       return onSaved();
     }
-    const body: Record<string, unknown> = { name, host, port: Number(port), username, authMethod, notes };
+    const body: Record<string, unknown> = { name, host, port: Number(port), username, authMethod, notes, tags: parseTags(tags) };
     if (!jumpLocked) Object.assign(body, { jumpMode, jumpHostId: jumpMode === 'fixed' ? jumpHostId : null });
     if (authMethod === 'key') body.keyId = keyId || null;
     if (authMethod === 'password' && password) body.password = password;
@@ -200,6 +261,21 @@ function ServerForm({ server, isAdmin, onClose, onSaved }: { server: Server | nu
           </>
         ) : (
           <p className="muted">Only the owner can change connection details and credentials.</p>
+        )}
+        <Field label="Tags" hint="Separate with commas, e.g. prod, web, london. Up to 10. Anyone the server is shared with sees them.">
+          <input value={tags} onChange={(e) => setTags(e.target.value)} autoCapitalize="none" maxLength={400} />
+        </Field>
+        {knownTags.filter((t) => !parseTags(tags).some((x) => x.toLowerCase() === t.toLowerCase())).length > 0 && (
+          <div className="tag-filter" aria-label="Existing tags">
+            {knownTags
+              .filter((t) => !parseTags(tags).some((x) => x.toLowerCase() === t.toLowerCase()))
+              .slice(0, 12)
+              .map((t) => (
+                <button type="button" key={t} className="tag" onClick={() => setTags([...parseTags(tags), t].join(', '))}>
+                  + {t}
+                </button>
+              ))}
+          </div>
         )}
         <Field label="Notes">
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
