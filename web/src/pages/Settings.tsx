@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { del, errorMessage, formatTime, get, post, put, type SettingsView } from '../api';
-import { Field, Form, useAsync } from '../ui';
+import { Field, Form, SubTabs, useAsync, useRememberedTab } from '../ui';
 import { BackupSection } from './Backups';
 import { JumpHostsSection } from './JumpHosts';
 import { VersionCard } from './Version';
@@ -29,35 +29,14 @@ export function SettingsPage() {
     if (reset) setResets((n) => n + 1);
   };
 
-  const [tab, setTab] = useState<TabId>(() => {
-    try {
-      const saved = sessionStorage.getItem('settings-tab');
-      return TABS.some((t) => t.id === saved) ? (saved as TabId) : 'security';
-    } catch {
-      return 'security';
-    }
-  });
-  const choose = (id: TabId) => {
-    setTab(id);
-    try {
-      sessionStorage.setItem('settings-tab', id);
-    } catch {
-      /* the tab simply is not remembered */
-    }
-  };
+  const [tab, choose] = useRememberedTab<TabId>('settings-tab', TABS.map((t) => t.id), 'security');
 
   return (
     <section>
       <div className="page-head">
         <h1>Settings</h1>
       </div>
-      <nav className="subtabs" role="tablist" aria-label="Settings sections">
-        {TABS.map((t) => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'current' : ''} onClick={() => choose(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      <SubTabs label="Settings sections" tabs={TABS} current={tab} onChoose={choose} />
       <p className="muted small">{TABS.find((t) => t.id === tab)?.blurb} Changes take effect immediately and are recorded in the audit log.</p>
       {error && <p className="error">{error}</p>}
       {current && (
