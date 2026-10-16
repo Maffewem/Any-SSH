@@ -16,7 +16,8 @@ interface SessionInfo {
 
 const TABS = [
   { id: 'profile', label: 'Profile', blurb: 'Your name, email address and role.' },
-  { id: 'security', label: 'Security', blurb: 'Password, two-factor authentication and trusted networks.' },
+  { id: 'security', label: 'Security', blurb: 'Your password and two-factor authentication.' },
+  { id: 'trusted-ips', label: 'Trusted IP addresses', blurb: 'Restrict where sign-ins to your account are accepted from.' },
   { id: 'devices', label: 'Devices', blurb: 'Browsers and apps currently signed in to your account.' },
   { id: 'delete', label: 'Delete account', blurb: 'Permanently remove your account and the data it owns.' },
 ] as const;
@@ -57,11 +58,13 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
             <h2>Two-factor authentication</h2>
             <MfaSection user={user} onChange={async () => onUserChange((await get<{ user: User }>('/api/auth/me')).user)} />
           </div>
-          <div className="card settings-section">
-            <h2>Trusted IP addresses</h2>
-            <TrustedIps user={user} />
-          </div>
         </>
+      )}
+      {tab === 'trusted-ips' && (
+        <div className="card settings-section">
+          <h2>Trusted IP addresses</h2>
+          <TrustedIps user={user} />
+        </div>
       )}
       {tab === 'devices' && (
         <div className="card settings-section">
