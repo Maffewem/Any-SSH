@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { useState } from 'react';
 import { del, errorMessage, formatTime, get, patch, post, put, type User } from '../api';
-import { Field, Form, SecretOnce, SubTabs, useAsync, useRememberedTab } from '../ui';
+import { Field, Form, SecretOnce, SubTabs, useAsync, useConfirm, useRememberedTab, useToast } from '../ui';
 import { ChangePasswordForm } from './Auth';
 import { DeleteAccountForm } from './DeleteAccount';
 
@@ -88,19 +88,17 @@ function ProfileForm({ user, onUserChange }: { user: User; onUserChange: (u: Use
   const [displayName, setDisplayName] = useState(user.displayName);
   const [email, setEmail] = useState(user.email ?? '');
   const [password, setPassword] = useState('');
-  const [saved, setSaved] = useState(false);
   const emailChanging = email.trim().toLowerCase() !== (user.email ?? '').toLowerCase();
   return (
     <Form
       submit="Save profile"
+      success="Profile saved."
       onSubmit={async () => {
-        setSaved(false);
         const res = await patch<{ user: User }>('/api/auth/profile', {
           displayName,
           ...(emailChanging ? { email: email.trim() || null, password } : {}),
         });
         setPassword('');
-        setSaved(true);
         onUserChange(res.user);
       }}
     >
@@ -115,7 +113,6 @@ function ProfileForm({ user, onUserChange }: { user: User; onUserChange: (u: Use
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
         </Field>
       )}
-      {saved && <p className="ok">Saved.</p>}
     </Form>
   );
 }
@@ -126,6 +123,7 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
   const [code, setCode] = useState('');
   const [enrol, setEnrol] = useState<{ secret: string; qr: string } | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const toast = useToast();
 
   const reset = () => (setStage('idle'), setPassword(''), setCode(''), setEnrol(null));
 
@@ -147,10 +145,12 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
           onSubmit={async () => {
             if (stage === 'disable') {
               await post('/api/auth/mfa/disable', { password, code });
+              toast.success('Two-factor authentication turned off.');
               reset();
               await onChange();
             } else {
               const res = await post<{ recoveryCodes: string[] }>('/api/auth/mfa/recovery-codes', { password, code });
+              toast.success('New recovery codes generated. The old ones no longer work.');
               reset();
               setRecoveryCodes(res.recoveryCodes);
             }
@@ -225,6 +225,7 @@ function MfaSection({ user, onChange }: { user: User; onChange: () => Promise<vo
         submit="Turn on"
         onSubmit={async () => {
           const res = await post<{ recoveryCodes: string[] }>('/api/auth/mfa/enable', { code });
+          toast.success('Two-factor authentication turned on.');
           reset();
           setRecoveryCodes(res.recoveryCodes);
           await onChange();
@@ -254,12 +255,14 @@ function TrustedIps({ user }: { user: User }) {
   const [policy, setPolicy] = useState<'notify' | 'challenge' | null>(null);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
   if (!data) return <p className="muted">Loading…</p>;
   const chosen = policy ?? data.policy;
-  const run = async (fn: () => Promise<unknown>) => {
+  const run = async (fn: () => Promise<unknown>, done: string) => {
     setError(null);
     try {
       await fn();
+      toast.success(done);
       setCidr('');
       setLabel('');
       reload();
@@ -281,7 +284,7 @@ function TrustedIps({ user }: { user: User }) {
               <code className="mono">{e.cidr}</code>
               {e.label && <span className="muted small"> · {e.label}</span>}
             </span>
-            <button className="ghost" onClick={() => void run(() => del(`/api/account/trusted-ips/${e.id}`))}>
+            <button className="ghost" onClick={() => void run(() => del(`/api/account/trusted-ips/${e.id}`), `${e.cidr} removed.`)}>
               Remove
             </button>
           </li>
@@ -294,12 +297,12 @@ function TrustedIps({ user }: { user: User }) {
       <div className="row wrap">
         <input value={cidr} onChange={(e) => setCidr(e.target.value)} placeholder="203.0.113.7 or 203.0.113.0/24" aria-label="IP address or range" />
         <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (optional)" aria-label="Label" />
-        <button disabled={!cidr || !password} onClick={() => void run(() => post('/api/account/trusted-ips', { cidr, label, password }))}>
+        <button disabled={!cidr || !password} onClick={() => void run(() => post('/api/account/trusted-ips', { cidr, label, password }), `${cidr} added.`)}>
           Add
         </button>
         <button
           disabled={!password || !data.currentIp || data.currentIpTrusted}
-          onClick={() => void run(() => post('/api/account/trusted-ips', { current: true, label: label || 'Added from this device', password }))}
+          onClick={() => void run(() => post('/api/account/trusted-ips', { current: true, label: label || 'Added from this device', password }), 'Current address added.')}
         >
           Add current IP address
         </button>
@@ -314,11 +317,11 @@ function TrustedIps({ user }: { user: User }) {
         {!data.canChallenge && <small>Requires an email address or two-factor authentication on your account.</small>}
       </Field>
       <div className="row wrap">
-        <button className="primary" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: true, policy: chosen }))}>
+        <button className="primary" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: true, policy: chosen }), 'Trusted address list saved.')}>
           {data.enabled ? 'Save' : 'Turn on'}
         </button>
         {data.enabled && (
-          <button className="danger-outline" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: false, policy: chosen }))}>
+          <button className="danger-outline" disabled={!password} onClick={() => void run(() => put('/api/account/trusted-ips/settings', { password, enabled: false, policy: chosen }), 'Trusted address list turned off.')}>
             Turn off
           </button>
         )}
@@ -335,6 +338,8 @@ function TrustedIps({ user }: { user: User }) {
 function Sessions() {
   const { data, reload } = useAsync(() => get<{ sessions: SessionInfo[] }>('/api/auth/sessions'), []);
   const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
+  const confirm = useConfirm();
   return (
     <>
     <ul className="list">
@@ -350,7 +355,7 @@ function Sessions() {
           {s.current ? (
             <span className="badge accent">This device</span>
           ) : (
-            <button className="ghost" onClick={async () => (await del(`/api/auth/sessions/${s.id}`), reload())}>
+            <button className="ghost" onClick={async () => (await del(`/api/auth/sessions/${s.id}`), toast.success('Device signed out.'), reload())}>
               Sign out
             </button>
           )}
@@ -361,7 +366,13 @@ function Sessions() {
     <button
       className="danger-outline"
       onClick={async () => {
-        if (!confirm('Sign out of every device, including this one? All open terminals will close.')) return;
+        const ok = await confirm({
+          title: 'Sign out of all devices',
+          message: 'This includes the device you are using. All open terminals will close.',
+          confirmLabel: 'Sign out everywhere',
+          danger: true,
+        });
+        if (!ok) return;
         try {
           await post('/api/auth/sessions/revoke-all');
           window.location.reload();

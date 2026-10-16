@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { errorMessage } from './api';
 
 export function Modal(props: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
@@ -23,7 +23,14 @@ export function Modal(props: { title: string; onClose: () => void; children: Rea
 }
 
 /** Form wrapper that handles busy state and shows the server's error message. */
-export function Form(props: { onSubmit: () => Promise<void>; children: ReactNode; submit: string; danger?: boolean }) {
+export function Form(props: { /** Resolve with `false` to abort without a confirmation (for example when the user cancelled a dialog). */
+  onSubmit: () => Promise<void | false>;
+  children: ReactNode;
+  submit: string;
+  danger?: boolean;
+  success?: string;
+}) {
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const handle = async (e: FormEvent) => {
@@ -31,7 +38,8 @@ export function Form(props: { onSubmit: () => Promise<void>; children: ReactNode
     setBusy(true);
     setError(null);
     try {
-      await props.onSubmit();
+      const result = await props.onSubmit();
+      if (result !== false && props.success) toast.success(props.success);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -60,15 +68,20 @@ export function Field(props: { label: string; hint?: string; children: ReactNode
 }
 
 export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+  const toast = useToast();
   const [done, setDone] = useState(false);
   return (
     <button
       type="button"
       onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => {
-          setDone(true);
-          setTimeout(() => setDone(false), 1500);
-        });
+        navigator.clipboard.writeText(text).then(
+          () => {
+            setDone(true);
+            setTimeout(() => setDone(false), 1500);
+            toast.success('Copied to the clipboard.');
+          },
+          () => toast.error('Could not copy. Select the text and copy it manually.'),
+        );
       }}
     >
       {done ? 'Copied' : label}
@@ -139,5 +152,89 @@ export function SubTabs<T extends string>(props: { label: string; tabs: readonly
         </button>
       ))}
     </nav>
+  );
+}
+
+type ToastKind = 'success' | 'error';
+type ToastItem = { id: number; kind: ToastKind; text: string };
+type Toasts = { success: (text: string) => void; error: (text: string) => void };
+
+const ToastContext = createContext<Toasts>({ success: () => {}, error: () => {} });
+export const useToast = () => useContext(ToastContext);
+
+/**
+ * One feedback pattern for every completed action. The two live regions exist from the start so
+ * screen readers announce messages added later: success politely, errors assertively.
+ */
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [items, setItems] = useState<ToastItem[]>([]);
+  const next = useRef(0);
+  const dismiss = useCallback((id: number) => setItems((all) => all.filter((t) => t.id !== id)), []);
+  const push = useCallback(
+    (kind: ToastKind, text: string) => {
+      const id = ++next.current;
+      setItems((all) => [...all.slice(-3), { id, kind, text }]);
+      setTimeout(() => dismiss(id), kind === 'error' ? 8000 : 4000);
+    },
+    [dismiss],
+  );
+  const api = useRef<Toasts>({ success: (t) => push('success', t), error: (t) => push('error', t) }).current;
+  const render = (kind: ToastKind) =>
+    items
+      .filter((t) => t.kind === kind)
+      .map((t) => (
+        <div key={t.id} className={`toast ${kind}`}>
+          <span>{t.text}</span>
+          <button className="ghost" onClick={() => dismiss(t.id)} aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
+      ));
+  return (
+    <ToastContext.Provider value={api}>
+      {children}
+      <div className="toasts">
+        <div role="status" aria-live="polite">
+          {render('success')}
+        </div>
+        <div role="alert" aria-live="assertive">
+          {render('error')}
+        </div>
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+export type ConfirmOptions = { title: string; message?: ReactNode; confirmLabel: string; danger?: boolean };
+type Confirm = (options: ConfirmOptions) => Promise<boolean>;
+
+const ConfirmContext = createContext<Confirm>(() => Promise.resolve(false));
+export const useConfirm = () => useContext(ConfirmContext);
+
+/** Named confirmation dialog for destructive or far-reaching actions; replaces window.confirm. */
+export function ConfirmProvider({ children }: { children: ReactNode }) {
+  const [pending, setPending] = useState<{ options: ConfirmOptions; resolve: (ok: boolean) => void } | null>(null);
+  const confirm = useCallback<Confirm>((options) => new Promise((resolve) => setPending({ options, resolve })), []);
+  const settle = (ok: boolean) => {
+    pending?.resolve(ok);
+    setPending(null);
+  };
+  return (
+    <ConfirmContext.Provider value={confirm}>
+      {children}
+      {pending && (
+        <Modal title={pending.options.title} onClose={() => settle(false)}>
+          {pending.options.message && <div className="confirm-message">{pending.options.message}</div>}
+          <div className="row confirm-actions">
+            <button autoFocus onClick={() => settle(false)}>
+              Cancel
+            </button>
+            <button className={pending.options.danger ? 'danger' : 'primary'} onClick={() => settle(true)}>
+              {pending.options.confirmLabel}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </ConfirmContext.Provider>
   );
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { formatTime, get, patch, post, type AuditEntry, type HostKeyRow, type User } from '../api';
-import { Field, Form, Modal, SecretOnce, useAsync } from '../ui';
+import { Field, Form, Modal, SecretOnce, useAsync, useConfirm, useToast } from '../ui';
 import { DeleteAccountForm } from './DeleteAccount';
 
 interface LinkResult {
@@ -117,6 +117,7 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
       ) : (
         <Form
           submit="Create user"
+          success="User created."
           onSubmit={async () => {
             const res = await post<{ user: User; temporaryPassword?: string; invite?: LinkResult }>('/api/admin/users', {
               username,
@@ -154,17 +155,18 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
   const [link, setLink] = useState<LinkResult | null>(null);
   const [role, setRole] = useState(user.role);
   const [status, setStatus] = useState(user.status);
-  const [message, setMessage] = useState<string | null>(null);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const action = async (label: string, fn: () => Promise<unknown>) => {
-    if (!confirm(`${label} for @${user.username}?`)) return;
+    if (!(await confirm({ title: `${label} for @${user.username}`, confirmLabel: label, danger: label !== 'Unlock' }))) return;
     setError(null);
     try {
       await fn();
-      setMessage(`${label}: done.`);
+      toast.success(`${label} for @${user.username}: done.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -174,6 +176,7 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
     <Modal title={`@${user.username}`} onClose={onClose}>
       <Form
         submit="Save"
+        success="User saved."
         onSubmit={async () => {
           const emailField = email.trim() !== (user.email ?? '') ? { email: email.trim() || null } : {};
           await patch(`/api/admin/users/${user.id}`, isSelf ? { displayName, ...emailField } : { displayName, ...emailField, role, status });
@@ -201,7 +204,6 @@ function EditUserDialog({ user, isSelf, onClose }: { user: User; isSelf: boolean
       </Form>
       {!isSelf && (
         <div className="subsection">
-          {message && <p className="ok">{message}</p>}
           {error && <p className="error">{error}</p>}
           {tempPassword && <SecretOnce label="New temporary password." value={tempPassword} />}
           {link && <LinkResultView result={link} email={user.email} />}
