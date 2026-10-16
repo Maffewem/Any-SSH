@@ -6,14 +6,14 @@ import { JumpHostsSection } from './JumpHosts';
 import { VersionCard } from './Version';
 
 function SourceBadge({ source }: { source: 'environment' | 'web' }) {
-  return source === 'web' ? <span className="badge accent">Set here</span> : <span className="badge">Server default</span>;
+  return source === 'web' ? <span className="badge accent">Customised</span> : <span className="badge">Default</span>;
 }
 
 function ResetButton({ group, source, onDone }: { group: string; source: 'environment' | 'web'; onDone: (s: SettingsView, reset: true) => void }) {
   if (source !== 'web') return null;
   return (
     <button className="ghost small" onClick={async () => onDone(await del<SettingsView>(`/api/admin/settings/${group}`), true)}>
-      Reset to server default
+      Restore default
     </button>
   );
 }
@@ -29,31 +29,70 @@ export function SettingsPage() {
     if (reset) setResets((n) => n + 1);
   };
 
+  const [tab, setTab] = useState<TabId>(() => {
+    try {
+      const saved = sessionStorage.getItem('settings-tab');
+      return TABS.some((t) => t.id === saved) ? (saved as TabId) : 'security';
+    } catch {
+      return 'security';
+    }
+  });
+  const choose = (id: TabId) => {
+    setTab(id);
+    try {
+      sessionStorage.setItem('settings-tab', id);
+    } catch {
+      /* the tab simply is not remembered */
+    }
+  };
+
   return (
     <section>
       <div className="page-head">
         <h1>Settings</h1>
       </div>
-      <p className="muted small">
-        Changes apply straight away and are recorded in the audit log. “Server default” means the value comes from the server’s
-        environment file; resetting returns to it. The domain, master key and other startup settings can only be changed on the server.
-      </p>
+      <nav className="subtabs" role="tablist" aria-label="Settings sections">
+        {TABS.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'current' : ''} onClick={() => choose(t.id)}>
+            {t.label}
+          </button>
+        ))}
+      </nav>
+      <p className="muted small">{TABS.find((t) => t.id === tab)?.blurb} Changes take effect immediately and are recorded in the audit log.</p>
       {error && <p className="error">{error}</p>}
       {current && (
         <>
-          <MailSection key={`mail-${resets}`} view={current} onSaved={onSaved} />
-          <SessionSection key={`sessions-${resets}`} view={current} onSaved={onSaved} />
-          <LimitsSection key={`limits-${resets}`} view={current} onSaved={onSaved} />
-          <JumpHostsSection />
-          <SecuritySection key={`security-${resets}`} view={current} onSaved={onSaved} />
-          <BackupSection key={`backup-${resets}`} view={current} onSaved={onSaved} />
-          <MaintenanceSection key={`maintenance-${resets}`} view={current} onSaved={onSaved} />
-          <VersionCard />
+          {tab === 'security' && (
+            <>
+              <SessionSection key={`sessions-${resets}`} view={current} onSaved={onSaved} />
+              <SecuritySection key={`security-${resets}`} view={current} onSaved={onSaved} />
+            </>
+          )}
+          {tab === 'access' && <JumpHostsSection />}
+          {tab === 'limits' && <LimitsSection key={`limits-${resets}`} view={current} onSaved={onSaved} />}
+          {tab === 'backups' && <BackupSection key={`backup-${resets}`} view={current} onSaved={onSaved} />}
+          {tab === 'updates' && (
+            <>
+              <VersionCard />
+              <MaintenanceSection key={`maintenance-${resets}`} view={current} onSaved={onSaved} />
+            </>
+          )}
+          {tab === 'notifications' && <MailSection key={`mail-${resets}`} view={current} onSaved={onSaved} />}
         </>
       )}
     </section>
   );
 }
+
+const TABS = [
+  { id: 'security', label: 'Security', blurb: 'Session timeouts and protection against repeated failed sign-ins.' },
+  { id: 'access', label: 'Access', blurb: 'Jump hosts that servers can be reached through.' },
+  { id: 'limits', label: 'Limits', blurb: 'Usage limits, set separately for each type of account.' },
+  { id: 'backups', label: 'Backups', blurb: 'Encrypted backups of the Any-SSH database.' },
+  { id: 'updates', label: 'Updates', blurb: 'The installed version, update checks and the maintenance window.' },
+  { id: 'notifications', label: 'Notifications', blurb: 'Outgoing email for invitations, password resets and security notices.' },
+] as const;
+type TabId = (typeof TABS)[number]['id'];
 
 function MailSection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
   const m = view.mail;
@@ -237,13 +276,14 @@ function SessionSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Se
 function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: SettingsView, reset?: true) => void }) {
   const l = view.limits;
   const [max, setMax] = useState(String(l.maxTerminalsPerUser));
+  const [adminMax, setAdminMax] = useState(l.maxTerminalsPerAdmin === null ? '' : String(l.maxTerminalsPerAdmin));
   const [detach, setDetach] = useState(String(l.detachMinutes));
   const [saved, setSaved] = useState(false);
   return (
     <div className="card settings-section">
       <div className="page-head">
         <h2>
-          Limits <SourceBadge source={l.source} />
+          Usage limits <SourceBadge source={l.source} />
         </h2>
         <ResetButton group="limits" source={l.source} onDone={onSaved} />
       </div>
@@ -251,12 +291,15 @@ function LimitsSection({ view, onSaved }: { view: SettingsView; onSaved: (s: Set
         submit="Save limits"
         onSubmit={async () => {
           setSaved(false);
-          onSaved(await put<SettingsView>('/api/admin/settings/limits', { maxTerminalsPerUser: Number(max), detachMinutes: Number(detach) }));
+          onSaved(await put<SettingsView>('/api/admin/settings/limits', { maxTerminalsPerUser: Number(max), maxTerminalsPerAdmin: adminMax.trim() ? Number(adminMax) : null, detachMinutes: Number(detach) }));
           setSaved(true);
         }}
       >
-        <Field label="Open terminals per user">
+        <Field label="Open terminals: standard users" hint="The most terminals one standard user can have open at once.">
           <input value={max} onChange={(e) => setMax(e.target.value)} inputMode="numeric" required />
+        </Field>
+        <Field label="Open terminals: administrators" hint="Leave empty to use the same limit as standard users.">
+          <input value={adminMax} onChange={(e) => setAdminMax(e.target.value)} inputMode="numeric" placeholder="Same as standard users" />
         </Field>
         <Field
           label="Keep a terminal after the browser drops (minutes)"

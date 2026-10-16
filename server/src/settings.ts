@@ -28,7 +28,10 @@ export interface SessionSettings {
 }
 
 export interface LimitSettings {
+  /** Open terminals for a standard user. */
   maxTerminalsPerUser: number;
+  /** Open terminals for an administrator; null = the same as a standard user. */
+  maxTerminalsPerAdmin: number | null;
   /** How long a terminal outlives a dropped browser connection. 0 = close at once. */
   detachMinutes: number;
 }
@@ -92,6 +95,7 @@ export const sessionSettingsSchema = z
 
 export const limitSettingsSchema = z.object({
   maxTerminalsPerUser: z.number().int().min(1).max(100),
+  maxTerminalsPerAdmin: z.number().int().min(1).max(100).nullable().default(null),
   detachMinutes: z.number().int().min(0).max(24 * 60),
 });
 
@@ -290,8 +294,14 @@ export class Settings {
   get limits(): LimitSettings {
     const row = this.row('limits');
     // Rows saved before detachMinutes existed fall back to the environment for it.
-    if (row) return { detachMinutes: this.env.detachMinutes, ...(JSON.parse(row.value) as Partial<LimitSettings>) } as LimitSettings;
-    return { maxTerminalsPerUser: this.env.maxTerminalsPerUser, detachMinutes: this.env.detachMinutes };
+    if (row) return { detachMinutes: this.env.detachMinutes, maxTerminalsPerAdmin: null, ...(JSON.parse(row.value) as Partial<LimitSettings>) } as LimitSettings;
+    return { maxTerminalsPerUser: this.env.maxTerminalsPerUser, maxTerminalsPerAdmin: null, detachMinutes: this.env.detachMinutes };
+  }
+
+  /** The open-terminal allowance for someone in this role. */
+  terminalLimit(role: 'admin' | 'user'): number {
+    const l = this.limits;
+    return role === 'admin' ? (l.maxTerminalsPerAdmin ?? l.maxTerminalsPerUser) : l.maxTerminalsPerUser;
   }
 
 
@@ -469,7 +479,7 @@ export class Settings {
     this.write('sessions', JSON.stringify(sessionSettingsSchema.parse(input)), null, actorId);
   }
 
-  setLimits(input: LimitSettings, actorId: string): void {
+  setLimits(input: z.input<typeof limitSettingsSchema>, actorId: string): void {
     this.write('limits', JSON.stringify(limitSettingsSchema.parse(input)), null, actorId);
   }
 

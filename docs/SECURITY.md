@@ -2,7 +2,7 @@
 
 Any-SSH is a self-hosted, multi-user SSH client. People sign in from any browser (desktop, Mac, iPhone, Android) and get a
 real terminal; the server holds the SSH keys and makes the SSH connections on their behalf. That makes the Any-SSH server
-the most sensitive box in the setup: whoever controls it can reach every saved server. This document says how it is
+the most sensitive machine in the setup: whoever controls it can reach every saved server. This document says how it is
 protected, and what is deliberately left for later.
 
 ## Architecture
@@ -118,7 +118,7 @@ docs/DEPLOY.md for use).
 | --- | --- |
 | Encryption | Public-key, in the style of age. Each file uses a fresh ephemeral X25519 key; the shared secret goes through HKDF-SHA256 to an AES-256-GCM key. Data is in 1 MiB frames with counter nonces, a "last frame" flag in the nonce and the header as associated data, so frames cannot be reordered, dropped, truncated or moved between files. |
 | Who can decrypt | Only the holder of the recovery **secret key**. The server stores just the public key, so a compromised server, a stolen bucket or an insider with storage access cannot read old backups. The secret key is generated on request (or offline with `any-ssh backup-key`), shown once and never stored or logged. Backups also remain useless without the master key. |
-| Never plaintext off-box | The SQLite snapshot is encrypted before it leaves the data volume; the S3/SFTP code only ever sees ciphertext, and the snapshot and temporary files are removed afterwards. A destination cannot be set without a recovery key. |
+| Never plaintext off the server | The SQLite snapshot is encrypted before it leaves the data volume; the S3/SFTP code only ever sees ciphertext, and the snapshot and temporary files are removed afterwards. A destination cannot be set without a recovery key. |
 | Integrity | Before encryption the snapshot must pass SQLite's integrity check, schema check, the audit log hash chain and a master key check (every stored secret opens). After upload the stored size must match, S3 uploads carry `Content-MD5`, SFTP uploads are written as `.partial` and renamed, and the SHA-256 of each backup is kept in the run history. Restore authenticates every frame and refuses wrong keys, tampering, truncation and trailing data before touching anything. |
 | Credentials | S3 secret keys and SFTP passwords/private keys are sealed under `setting:backup` with the master key, re-sealed by key rotation, and never returned by the API. They are dropped when the endpoint/bucket/key ID (S3) or host/port/username (SFTP) changes without new ones being entered. |
 | Changing the target | Changing the key, destination or schedule needs the admin's password again (rate-limited), is audited by field name only, and sends the admin a security notice, so a hijacked admin session cannot quietly redirect copies of the database. |
@@ -173,7 +173,7 @@ and reset links directly so they can pass them on.
 
 ## Jump hosts (bastions)
 
-A server can be reached through a jump host instead of directly from the Any-SSH box, so a single machine does not have to be
+A server can be reached through a jump host instead of directly from the Any-SSH server, so a single machine does not have to be
 exposed or trusted with the route to everything.
 
 - **Admin-only.** Only admins create, change, disable, delete or verify jump hosts (`/api/admin/jump-hosts`, all audited as
@@ -191,12 +191,16 @@ exposed or trusted with the route to everything.
 - **"Closest"** (`auto`) means the enabled, host-key-verified jump hosts ordered by lowest TCP connect time from the Any-SSH server
   (measured at connect time, cached for 60 s); unreachable ones are skipped and a failing one falls over to the next. It is a
   proximity-to-Any-SSH measure, not a measure of the path onward to the target. `fixed` never falls back: if its jump host is disabled,
-  deleted or unverified, the connection fails closed instead of going direct or through another box.
+  deleted or unverified, the connection fails closed instead of going direct or through another jump host.
 - Disabling, deleting, re-pointing or forgetting the host key of a jump host closes the live terminals using it, and changing a server's
   route closes that server's open terminals. The session audit entry records which jump host (and mode) was used.
 - The target name is resolved by the jump host, so it may be reachable only from there. Literal addresses still get the SSRF guard;
   names are not resolved by Any-SSH in this mode, so the guard cannot vet them (the jump host is admin-chosen and trusted for routing).
-- One hop per connection for now; chains of several jump hosts are not supported yet.
+- Any number of jump hosts can be defined (for example one per site); "closest" chooses between them and fails over. One hop per
+  connection for now; chains of several jump hosts are not supported yet.
+- `deploy/jump-host-setup.sh` prepares a jump host: it creates a dedicated key-only account with no shell, agent, X11 or tunnel
+  forwarding (optionally limited to listed destinations with `--allow host:port`), validates `sshd` before reloading it, and prints the
+  host key fingerprints to verify. It is meant to be downloaded, read, then run as root; Settings → Access shows the exact command.
 
 ## Detached sessions and split panes
 
@@ -216,11 +220,24 @@ exposed or trusted with the route to everything.
 
 ## Runtime settings
 
-Admins can change email (SMTP), session timing (lock, idle sign-out, maximum length), the per-user terminal limit, how long a
-dropped terminal is kept, the jump hosts, brute-force thresholds and backups on the Settings page. Each group falls back to its environment variable until saved, and can be reset to it. Startup and
+Admins can change email (SMTP), session timing (lock, idle sign-out, maximum length), the open-terminal limits (set separately for standard users and administrators), how long a
+dropped terminal is kept, the jump hosts, brute-force thresholds, backups, updates and the maintenance window on the Settings page, which is organised into
+Security, Access, Limits, Backups, Updates and Notifications tabs. Each group falls back to its environment variable until saved, and can be reset to it. Startup and
 security boundary settings stay environment-only on purpose, so a stolen admin session cannot change them: the master
 key, database, allowed origins, public URL (it is the base of emailed links), cookie and proxy flags, and the loopback
 SSRF guard. Note that an admin can point SMTP at any host and port the server can reach.
+
+## Signing out everywhere and deleting accounts
+
+- **Sign out of all devices** (Account page, or an admin on a user's dialog) destroys every session of the account, including the current
+  one, and closes its live terminals. Audited as `auth.sign_out_everywhere` / `admin.user_sign_out`; the user is emailed when an admin does it.
+- **Delete account** needs the account password (and a 2FA code when 2FA is on; failures count towards brute-force protection). It removes
+  the account's keys, servers, shares and sessions, and is audited as `user.account_delete` with the names of what was removed.
+- **Shared servers.** If other people use servers the account owns, deletion is refused until the person either types "delete" to
+  confirm those servers are removed for everyone, or transfers them to another active user. A transfer moves ownership of the shared
+  servers and the saved keys they use (so credentials keep working); servers that are not shared are still deleted. The new owner is emailed.
+  Administrators can do the same for another user (`/api/admin/users/:id/transfer-servers`, then delete), audited as `admin.servers_transfer`.
+- The last active administrator cannot be deleted.
 
 ## Web hardening
 

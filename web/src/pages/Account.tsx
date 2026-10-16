@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { del, errorMessage, formatTime, get, patch, post, put, type User } from '../api';
 import { Field, Form, SecretOnce, useAsync } from '../ui';
 import { ChangePasswordForm } from './Auth';
+import { DeleteAccountForm } from './DeleteAccount';
 
 interface SessionInfo {
   id: string;
@@ -15,6 +16,7 @@ interface SessionInfo {
 
 export function AccountPage({ user, onUserChange }: { user: User; onUserChange: (u: User) => void }) {
   const [passwordDone, setPasswordDone] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   return (
     <section className="stack">
       <h1>Account</h1>
@@ -41,6 +43,19 @@ export function AccountPage({ user, onUserChange }: { user: User; onUserChange: 
       <div className="card">
         <h2>Signed-in devices</h2>
         <Sessions />
+      </div>
+      <div className="card">
+        <h2>Delete account</h2>
+        {deleting ? (
+          <DeleteAccountForm self username={user.username} mfaEnabled={user.mfaEnabled} onDeleted={() => window.location.reload()} />
+        ) : (
+          <>
+            <p className="muted">Permanently removes your account, SSH keys and servers. You will be asked how to handle servers shared with other people.</p>
+            <button className="danger-outline" onClick={() => setDeleting(true)}>
+              Delete my account…
+            </button>
+          </>
+        )}
       </div>
     </section>
   );
@@ -296,7 +311,9 @@ function TrustedIps({ user }: { user: User }) {
 
 function Sessions() {
   const { data, reload } = useAsync(() => get<{ sessions: SessionInfo[] }>('/api/auth/sessions'), []);
+  const [error, setError] = useState<string | null>(null);
   return (
+    <>
     <ul className="list">
       {data?.sessions.map((s) => (
         <li key={s.id}>
@@ -317,6 +334,22 @@ function Sessions() {
         </li>
       ))}
     </ul>
+    {error && <p className="error">{error}</p>}
+    <button
+      className="danger-outline"
+      onClick={async () => {
+        if (!confirm('Sign out of every device, including this one? All open terminals will close.')) return;
+        try {
+          await post('/api/auth/sessions/revoke-all');
+          window.location.reload();
+        } catch (e) {
+          setError(errorMessage(e));
+        }
+      }}
+    >
+      Sign out of all devices
+    </button>
+    </>
   );
 }
 

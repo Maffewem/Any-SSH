@@ -82,7 +82,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     if (!safeEqual(body.setupToken.trim(), setup.token)) {
       recordAuthFailure(ctx, req.log, clientIp(req), 'setup');
       audit.record({ action: 'setup.create_admin', outcome: 'failure', ip: clientIp(req) });
-      throw forbidden('Setup token is incorrect.');
+      throw forbidden('The setup token is incorrect.');
     }
     const problem = checkPasswordPolicy(body.password, body.username);
     if (problem) throw badRequest(problem);
@@ -309,26 +309,6 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext, setup:
     const { ip } = parse(z.object({ ip: z.string().min(2).max(64) }), req.params);
     if (!ctx.bruteForce.unlockIp(ip)) throw notFound('That address is not locked out');
     audit.record({ actorId: admin.id, actorUsername: admin.username, action: 'admin.ip_unlock', targetType: 'ip', targetId: ip, ip: clientIp(req) });
-    return { ok: true };
-  });
-
-  app.delete('/api/admin/users/:id', async (req) => {
-    const admin = requireAdmin(req).user;
-    const { id } = parse(idParam, req.params);
-    const target = findUser(id);
-    if (!target) throw notFound('User not found');
-    if (target.id === admin.id) throw badRequest('You cannot delete your own account.');
-    if (target.role === 'admin' && target.status === 'active' && activeAdminCount() <= 1) {
-      throw badRequest('There must be at least one active administrator.');
-    }
-    terminals.closeForUser(id, 'Your account was removed.');
-    sessions.destroyAllForUser(id);
-    // Cascades remove their keys, servers (and those servers' shares) and shares granted to them.
-    db.prepare('DELETE FROM users WHERE id = ?').run(id);
-    audit.record({
-      actorId: admin.id, actorUsername: admin.username, action: 'admin.user_delete', targetType: 'user', targetId: id,
-      ip: clientIp(req), details: { username: target.username },
-    });
     return { ok: true };
   });
 

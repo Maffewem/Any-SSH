@@ -18,6 +18,7 @@ import { checkSessionIp } from './ipTrust.js';
 import { ConfigurableMailer, type Mailer } from './mail.js';
 import { countStale } from './rotate.js';
 import { registerAccountRoutes } from './routes/account.js';
+import { registerAccountLifecycleRoutes } from './routes/accountLifecycle.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerJumpHostRoutes } from './routes/jumpHosts.js';
 import { registerKeyRoutes } from './routes/keys.js';
@@ -116,9 +117,9 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   app.addHook('onRequest', async (req) => {
     if (!req.url.startsWith('/api/')) return;
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-      if (req.headers[CSRF_HEADER] !== '1') throw new HttpError(403, 'Missing CSRF header', 'csrf');
+      if (req.headers[CSRF_HEADER] !== '1') throw new HttpError(403, 'The request was blocked: a required security header is missing.', 'csrf');
       const origin = req.headers.origin;
-      if (origin && !config.allowedOrigins.includes(origin)) throw new HttpError(403, 'Origin not allowed', 'csrf');
+      if (origin && !config.allowedOrigins.includes(origin)) throw new HttpError(403, 'The request was blocked: it came from an unrecognised origin.', 'csrf');
     }
     req.auth = sessions.resolve(sessionToken(ctx, req));
     // The lock screen's background state check is not activity; everything else is.
@@ -146,6 +147,7 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
   app.get('/api/health', async () => ({ ok: true }));
   registerAuthRoutes(app, ctx);
   registerAccountRoutes(app, ctx);
+  registerAccountLifecycleRoutes(app, ctx);
   registerTrustedIpRoutes(app, ctx);
   registerUserRoutes(app, ctx, setup);
   registerKeyRoutes(app, ctx);
@@ -161,10 +163,10 @@ export async function buildApp(config: Config, opts: { db?: DB; logger?: boolean
     // Single-page app: unknown non-API paths get index.html.
     app.setNotFoundHandler((req, reply) => {
       if (req.method === 'GET' && !req.url.startsWith('/api/')) return reply.sendFile('index.html');
-      return reply.status(404).send({ error: 'Not found', code: 'not_found' });
+      return reply.status(404).send({ error: 'Not found.', code: 'not_found' });
     });
   } else {
-    app.setNotFoundHandler((_req, reply) => reply.status(404).send({ error: 'Not found', code: 'not_found' }));
+    app.setNotFoundHandler((_req, reply) => reply.status(404).send({ error: 'Not found.', code: 'not_found' }));
   }
 
   // Tests build many apps; only a real server (which has a data dir on disk) polls the registry.

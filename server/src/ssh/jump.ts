@@ -60,7 +60,7 @@ export function forgetLatency(id: string): void {
 
 /**
  * The jump hosts to try for a server, best first; empty means connect directly.
- * 'fixed' is exactly the admin's choice and fails closed (no fallback to direct or to another box).
+ * 'fixed' is exactly the admin's choice and fails closed (no fallback to a direct connection or another jump host).
  * 'auto' means the enabled, host-key-verified jump hosts ordered by lowest TCP connect time from this
  * server, measured now (cached for a minute); unreachable ones are dropped and the connection
  * falls over to the next if one fails.

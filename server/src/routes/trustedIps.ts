@@ -69,7 +69,7 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
     let value: string;
     if (body.current) {
       const ip = normaliseIp(clientIp(req));
-      if (!ip) throw badRequest('Could not work out your current IP address.');
+      if (!ip) throw badRequest('Your current IP address could not be determined.');
       value = ip;
     } else {
       const parsed = parseTrustedEntry(body.cidr ?? '');
@@ -92,7 +92,7 @@ export function registerTrustedIpRoutes(app: FastifyInstance, ctx: AppContext): 
     const { user } = requireUser(req);
     const { id } = parse(idParam, req.params);
     const row = db.prepare('SELECT cidr FROM trusted_ips WHERE id = ? AND user_id = ?').get(id, user.id) as { cidr: string } | undefined;
-    if (!row) throw new HttpError(404, 'Not found', 'not_found');
+    if (!row) throw new HttpError(404, 'Not found.', 'not_found');
     // Do not let someone delete the entry that covers the address they are using while the list is enforced.
     const fresh = getUser(user.id);
     if (fresh.trusted_ip_enabled) {

@@ -11,18 +11,30 @@ export function JumpHostsSection() {
     <div className="card settings-section">
       <div className="page-head">
         <h2>Jump hosts</h2>
-        <button onClick={() => setAdding((a) => !a)}>{adding ? 'Cancel' : 'Add jump host'}</button>
+        <button onClick={() => setAdding((a) => !a)}>{adding ? 'Cancel' : 'Add a jump host'}</button>
       </div>
       <p className="muted small">
-        Servers can reach their targets through a jump host, so no single box has to be exposed. The jump host only relays encrypted
-        traffic: each person’s login to the target stays end to end, and it never sees their key, password or keystrokes. Any-SSH logs in
-        to the jump host with its own key (shown below, never the private half). Connections to a jump host are refused until you verify its
-        host key. “Closest” means the lowest TCP connect time from this server, measured at connect time, falling back to the next one if
-        it fails.
+        A jump host (also called a bastion) is a gateway that servers on a private network are reached through, so only the gateway needs to be
+        exposed to the internet. You can add as many as you need, for example one per site or network.
       </p>
+      <ul className="muted small">
+        <li>
+          <strong>Privacy:</strong> a jump host relays encrypted traffic only. Each person’s sign-in to the target server is end to end, so the
+          jump host never sees their key, password or keystrokes.
+        </li>
+        <li>
+          <strong>Choosing:</strong> each server is set to use no jump host, a specific jump host, or the closest one. “Closest” picks the
+          reachable jump host with the lowest connection time from this server and moves on to the next if it fails. A specific jump host never falls
+          back to another route.
+        </li>
+        <li>
+          <strong>Trust:</strong> Any-SSH signs in to a jump host with its own key (the public half is shown below). A jump host cannot be used
+          until you have verified its host key.
+        </li>
+      </ul>
       {error && <p className="error">{error}</p>}
       {adding && <AddJumpHost onDone={() => (setAdding(false), reload())} />}
-      {data?.jumpHosts.length === 0 && !adding && <p className="muted">No jump hosts yet.</p>}
+      {data?.jumpHosts.length === 0 && !adding && <p className="muted">No jump hosts have been added.</p>}
       {data?.jumpHosts.map((j) => <JumpHostRow key={j.id} jump={j} onChange={reload} />)}
     </div>
   );
@@ -35,14 +47,14 @@ function AddJumpHost({ onDone }: { onDone: () => void }) {
   const [username, setUsername] = useState('');
   return (
     <Form
-      submit="Create jump host"
+      submit="Add jump host"
       onSubmit={async () => {
         await post('/api/admin/jump-hosts', { name, host, port: Number(port), username });
         onDone();
       }}
     >
       <Field label="Name">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Home bastion" required />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Office gateway" required />
       </Field>
       <div className="row2">
         <Field label="Host">
@@ -52,7 +64,7 @@ function AddJumpHost({ onDone }: { onDone: () => void }) {
           <input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" required />
         </Field>
       </div>
-      <Field label="SSH username on the jump host" hint="Give this account as little as possible: it only needs to forward connections.">
+      <Field label="Account on the jump host" hint="Use a dedicated account with no other permissions. It only needs to forward connections.">
         <input value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" required />
       </Field>
     </Form>
@@ -75,6 +87,7 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
     }
   };
   const authorizedKeysLine = `restrict,port-forwarding ${jump.publicKey}`;
+  const setupCommand = `curl -fsSLO https://raw.githubusercontent.com/Maffewem/Any-SSH/main/deploy/jump-host-setup.sh && less jump-host-setup.sh && sudo bash jump-host-setup.sh --user ${jump.username} --key '${jump.publicKey}'`;
 
   return (
     <div className="subsection">
@@ -82,13 +95,21 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
         <strong>{jump.name}</strong> <span className="mono muted">{jump.username}@{jump.host}{jump.port !== 22 ? `:${jump.port}` : ''}</span>{' '}
         {!jump.enabled && <span className="badge warn">Disabled</span>}{' '}
         {jump.hostKeyFingerprint ? <span className="badge">Host key verified</span> : <span className="badge warn">Host key not verified</span>}
-        {jump.serverCount > 0 && <span className="badge">{jump.serverCount} server{jump.serverCount === 1 ? '' : 's'} fixed to it</span>}
+        {jump.serverCount > 0 && <span className="badge">{jump.serverCount} server{jump.serverCount === 1 ? '' : 's'} using it</span>}
       </p>
       <details>
-        <summary className="muted small">Authorize Any-SSH on this jump host</summary>
+        <summary className="muted small">Set up this jump host</summary>
         <p className="muted small">
-          Add this line to <code>~/.ssh/authorized_keys</code> of {jump.username} on the jump host. <code>restrict,port-forwarding</code> limits the
-          key to relaying connections: no shell, no agent or X11 forwarding.
+          Recommended: on the jump host, download and review the setup script, then run it. It creates a dedicated account that can only relay
+          connections (no shell, agent or X11 forwarding) and authorises the Any-SSH key. Add <code>--allow host:port</code> to limit it to specific destinations.
+        </p>
+        <div className="row">
+          <code className="secret">{setupCommand}</code>
+          <CopyButton text={setupCommand} />
+        </div>
+        <p className="muted small">
+          To set it up by hand instead, add this line to <code>~/.ssh/authorized_keys</code> for {jump.username} on the jump host.{' '}
+          <code>restrict,port-forwarding</code> limits the key to relaying connections.
         </p>
         <div className="row">
           <code className="secret">{authorizedKeysLine}</code>
@@ -97,7 +118,7 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
       </details>
       {jump.hostKeyFingerprint && (
         <p className="muted small">
-          Pinned host key: <code>{jump.hostKeyFingerprint}</code>
+          Verified host key: <code>{jump.hostKeyFingerprint}</code>
         </p>
       )}
       <div className="row">
@@ -116,11 +137,11 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
           <button
             disabled={busy}
             onClick={() =>
-              confirm('Forget the pinned host key? Open terminals through it close, and it cannot be used until you verify a key again.') &&
+              confirm('Remove the verified host key? Terminals open through this jump host will close, and it cannot be used again until you verify a host key.') &&
               run(async () => (await post(`/api/admin/jump-hosts/${jump.id}/forget-host-key`), setTest(null), onChange()))
             }
           >
-            Forget host key
+            Remove verified host key
           </button>
         )}
         <button
@@ -128,7 +149,7 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
           disabled={busy}
           onClick={() =>
             confirm(
-              `Delete ${jump.name}? Open terminals through it close. Servers fixed to it will refuse to connect (they never fall back to a direct connection).`,
+              `Delete ${jump.name}? Terminals open through it will close. Servers set to use it will not connect until you choose another route; they never fall back to a direct connection.`,
             ) && run(async () => (await del(`/api/admin/jump-hosts/${jump.id}`), onChange()))
           }
         >
@@ -139,13 +160,12 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
       {test && (
         <div className="muted small">
           {test.latencyMs !== null && <p>Reachable in {Math.round(test.latencyMs)} ms.</p>}
-          {test.latencyMs === null && <p className="error">Not reachable from Any-SSH.</p>}
+          {test.latencyMs === null && <p className="error">Any-SSH could not reach this jump host.</p>}
           {test.error && <p className="error">{test.error}</p>}
           {test.hostKey === 'unpinned' && test.fingerprint && (
             <>
               <p>
-                It presented this host key. Check it matches the jump host (on it: <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>)
-                before trusting it:
+                The jump host presented this host key. Confirm that it matches before trusting it (run this on the jump host: <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>):
               </p>
               <p className="fingerprint mono">{test.fingerprint}</p>
               <button
@@ -157,8 +177,8 @@ function JumpHostRow({ jump, onChange }: { jump: JumpHost; onChange: () => void 
               </button>
             </>
           )}
-          {test.hostKey === 'mismatch' && <p className="error">HOST KEY CHANGED: it presented {test.fingerprint}. Do not trust it unless you changed the jump host’s keys.</p>}
-          {test.hostKey === 'match' && test.authenticated && <p className="ok">Host key matches and the Any-SSH key was accepted. Checked {formatTime(Date.now())}.</p>}
+          {test.hostKey === 'mismatch' && <p className="error">WARNING: the host key has changed. The jump host presented {test.fingerprint}. Do not trust it unless you changed the jump host’s keys yourself.</p>}
+          {test.hostKey === 'match' && test.authenticated && <p className="ok">The host key matches and the jump host accepted the Any-SSH key. Checked {formatTime(Date.now())}.</p>}
         </div>
       )}
     </div>

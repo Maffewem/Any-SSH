@@ -20,7 +20,7 @@ export class HttpError extends Error {
 }
 
 export const badRequest = (msg: string) => new HttpError(400, msg, 'bad_request');
-export const notFound = (msg = 'Not found') => new HttpError(404, msg, 'not_found');
+export const notFound = (msg = 'Not found.') => new HttpError(404, msg, 'not_found');
 export const forbidden = (msg = 'Forbidden') => new HttpError(403, msg, 'forbidden');
 
 export function parse<T extends z.ZodType>(schema: T, data: unknown): z.infer<T> {
@@ -70,15 +70,15 @@ interface GuardOptions {
 /** Returns the authenticated, fully-logged-in user or throws 401/403. */
 export function requireUser(req: FastifyRequest, opts: GuardOptions = {}): ResolvedSession {
   const auth = req.auth;
-  if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'Not signed in', 'unauthenticated');
+  if (!auth || auth.session.stage !== 'full') throw new HttpError(401, 'You are not signed in.', 'unauthenticated');
   if (auth.session.ip_challenge === 1 && !opts.allowIpChallenge) {
-    throw new HttpError(403, 'Verify this sign-in first', 'ip_challenge');
+    throw new HttpError(403, 'Verify this sign-in to continue.', 'ip_challenge');
   }
   if (auth.session.locked_at !== null) throw new HttpError(401, 'This session is locked. Enter your password to unlock it.', 'session_locked');
   if (auth.user.must_change_password && !opts.allowPendingPasswordChange) {
-    throw new HttpError(403, 'You must change your password first', 'password_change_required');
+    throw new HttpError(403, 'You must change your password before continuing.', 'password_change_required');
   }
-  if (opts.admin && auth.user.role !== 'admin') throw forbidden('Administrator access required');
+  if (opts.admin && auth.user.role !== 'admin') throw forbidden('Administrator access is required.');
   return auth;
 }
 

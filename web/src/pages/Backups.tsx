@@ -193,10 +193,10 @@ export function BackupSection({ view, onSaved }: { view: SettingsView; onSaved: 
 
         <Field label="Where to store backups">
           <select value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
-            <option value="none">Nowhere yet</option>
+            <option value="none">Not enabled</option>
             <option value="s3">S3-compatible storage (AWS, Backblaze B2, Cloudflare R2, MinIO…)</option>
             <option value="sftp">Another server over SFTP</option>
-            <option value="local">This server only (not a real backup if the disk dies)</option>
+            <option value="local">Local (this server)</option>
           </select>
         </Field>
 

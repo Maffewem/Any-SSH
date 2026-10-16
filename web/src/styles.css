@@ -191,3 +191,9 @@ td.details { max-width: 360px; overflow-wrap: anywhere; color: var(--muted); }
   font-size: 0.9rem;
   text-align: center;
 }
+
+.subtabs { display: flex; gap: 0.25rem; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--border); margin-bottom: 0.75rem; }
+.subtabs button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); padding: 0.5rem 0.8rem; white-space: nowrap; }
+.subtabs button.current { color: var(--text); border-bottom-color: var(--accent, currentColor); }
+.notice { border: 1px solid var(--warn); border-radius: var(--radius); padding: 0.75rem 1rem; }
+.notice ul { margin: 0.5rem 0; padding-left: 1.25rem; }

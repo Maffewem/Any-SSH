@@ -9,7 +9,8 @@ Install it as an app from Safari ("Add to Home Screen") or Chrome.
   send reset links, reset 2FA, delete, and read a tamper-evident audit log.
 - **Email:** invites, "forgot password" reset links and security notices over SMTP (logged to the console in
   development).
-- **Settings page:** admins set SMTP (with a test email), session lock and timeout periods, and terminal limits in the app.
+- **Settings:** admins manage security, jump hosts, usage limits (per account type), backups, updates and email in a tabbed Settings page.
+- **Account control:** sign out of every device, and delete an account with its keys and servers, or transfer shared servers to another user first.
 - **Saved servers** with key, stored-password or ask-each-time authentication, and pinned host keys.
 - **SSH keys:** generate (Ed25519, ECDSA, RSA 4096) or import. Private keys are encrypted at rest, and only their owner
   can export one, after confirming their password.
