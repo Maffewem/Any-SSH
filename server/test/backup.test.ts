@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import ssh2 from 'ssh2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BackupFormatError, backupKeyId, decryptFile, encryptFile, generateBackupKeyPair, publicKeyFromSecret } from '../src/backup/format.js';
+import { BackupFormatError, backupKeyId, decryptFile, encryptFile, generateBackupKeyPair, openBackupFile, publicKeyFromSecret, serverBackupKeyPair } from '../src/backup/format.js';
 import { lastSlot } from '../src/backup/service.js';
 import { signV4 } from '../src/backup/targets.js';
 import { verifyDatabaseFile } from '../src/backup/verify.js';
@@ -77,6 +77,27 @@ describe('encrypted backup format', () => {
     await attempt(good.subarray(0, firstFrameEnd));
     await attempt(Buffer.concat([good, Buffer.from('x')]));
     await attempt(Buffer.from('not a backup at all, just some text that is long enough to have a header'));
+  });
+
+  it('derives a stable system key from the master key, and opens plain SQLite backups as they are', async () => {
+    const master = randomBytes(32);
+    expect(serverBackupKeyPair(master)).toEqual(serverBackupKeyPair(Buffer.from(master)));
+    expect(serverBackupKeyPair(master).publicKey).not.toBe(serverBackupKeyPair(randomBytes(32)).publicKey);
+    const recovery = generateBackupKeyPair();
+    const src = path.join(tmp, 'src');
+    writeFileSync(src, randomBytes(3000));
+    await encryptFile(src, path.join(tmp, 'sys'), serverBackupKeyPair(master).publicKey);
+    // Whichever of the keys given fits is used.
+    const r = await openBackupFile(path.join(tmp, 'sys'), path.join(tmp, 'sys.out'), [recovery.secretKey, serverBackupKeyPair(master).secretKey]);
+    expect(r.keyId).toBe(backupKeyId(serverBackupKeyPair(master).publicKey));
+    expect(readFileSync(path.join(tmp, 'sys.out')).equals(readFileSync(src))).toBe(true);
+    await expect(openBackupFile(path.join(tmp, 'sys'), path.join(tmp, 'x'), [recovery.secretKey])).rejects.toThrow(/recovery secret key it was made with/);
+
+    const plain = path.join(tmp, 'plain.db');
+    writeFileSync(plain, Buffer.concat([Buffer.from('SQLite format 3\0', 'latin1'), randomBytes(2 * 1024 * 1024)]));
+    expect((await openBackupFile(plain, path.join(tmp, 'plain.out'), [])).keyId).toBeNull();
+    expect(readFileSync(path.join(tmp, 'plain.out')).equals(readFileSync(plain))).toBe(true);
+    await expect(decryptFile(plain, path.join(tmp, 'plain.out2'), recovery.secretKey)).rejects.toThrow(/not encrypted/);
   });
 
   it('derives the public key and a stable key id from the secret key', () => {
@@ -373,6 +394,35 @@ describe('backing up and restoring', () => {
     expect(status.status).toMatchObject({ configured: true, scheduled: true, running: false });
     expect(status.status.lastSuccess.name).toBe(names[2]);
   }, 20_000);
+
+  it('encrypts with the system key when asked, so the master key alone restores it', async () => {
+    const res = await admin.put('/api/admin/settings/backup', settingsBody({ encryption: 'system', publicKey: '' }));
+    expect(res.status).toBe(200);
+    expect(res.body.backup.encryption).toBe('system');
+    const run = (await admin.post('/api/admin/backup/run')).body.run;
+    expect(run).toMatchObject({ outcome: 'success', encryption: 'system', keyId: backupKeyId(serverBackupKeyPair(built.ctx.config.masterKey).publicKey) });
+    expect(run.name).toMatch(/\.anybak$/);
+    const file = path.join(dataDir, 'backups', run.name);
+    expect(readFileSync(file).includes('SQLite format 3')).toBe(false);
+    const out = path.join(tmp, 'restored.db');
+    await openBackupFile(file, out, [serverBackupKeyPair(built.ctx.config.masterKey).secretKey]);
+    expect(verifyDatabaseFile(out, built.ctx.box).ok).toBe(true);
+  });
+
+  it('stores unencrypted backups only once that is confirmed', async () => {
+    const unconfirmed = await admin.put('/api/admin/settings/backup', settingsBody({ encryption: 'none', publicKey: '' }));
+    expect(unconfirmed.status).toBe(400);
+    expect(unconfirmed.body.error).toMatch(/without encryption/);
+    const ok = await admin.put('/api/admin/settings/backup', settingsBody({ encryption: 'none', publicKey: '', acceptUnencrypted: true }));
+    expect(ok.status).toBe(200);
+    const row = built.ctx.db.prepare("SELECT details FROM audit_log WHERE action = 'admin.settings_change' AND target_id = 'backup' AND outcome = 'success'").get() as { details: string };
+    expect(JSON.parse(row.details).changes.encryption).toEqual({ from: 'recovery', to: 'none' });
+    const run = (await admin.post('/api/admin/backup/run')).body.run;
+    expect(run).toMatchObject({ outcome: 'success', encryption: 'none', keyId: null });
+    expect(run.name).toMatch(/\.db$/);
+    const file = path.join(dataDir, 'backups', run.name);
+    expect(verifyDatabaseFile(file, built.ctx.box).ok).toBe(true);
+  });
 
   it('rejects a damaged database instead of backing it up', () => {
     const bad = path.join(tmp, 'bad.db');

@@ -13,6 +13,9 @@ import { open, rm, type FileHandle } from 'node:fs/promises';
  *
  * A fresh ephemeral key per file gives a fresh AES key (X25519 → HKDF-SHA256). Each frame uses a counter nonce with the
  * "last" flag folded in, and the header as AAD, so frames cannot be reordered, dropped, truncated or moved to another file.
+ *
+ * With system-managed encryption the same format is used, but the key pair is derived from the master key
+ * (serverBackupKeyPair), so restoring needs only the master key. Unencrypted backups are the plain SQLite file.
  */
 
 const MAGIC = Buffer.from('ANYBAK1\n', 'latin1');
@@ -22,6 +25,10 @@ const TAG_LENGTH = 16;
 const PUBLIC_PREFIX = 'anybak-pub-1-';
 const SECRET_PREFIX = 'anybak-secret-1-';
 const PKCS8_X25519_PREFIX = Buffer.from('302e020100300506032b656e04220420', 'hex');
+const SQLITE_MAGIC = Buffer.from('SQLite format 3\0', 'latin1');
+
+/** How backups are protected. 'recovery': to the admin's recovery key. 'system': to a key derived from the master key. */
+export type BackupEncryption = 'recovery' | 'system' | 'none';
 
 export class BackupFormatError extends Error {}
 
@@ -43,6 +50,17 @@ function secretKeyObject(text: string): KeyObject {
   const raw = t.startsWith(SECRET_PREFIX) ? Buffer.from(t.slice(SECRET_PREFIX.length), 'base64url') : null;
   if (!raw || raw.length !== 32) throw new BackupFormatError('That is not an Any-SSH backup secret key (it should start with "anybak-secret-1-").');
   return createPrivateKey({ key: Buffer.concat([PKCS8_X25519_PREFIX, raw]), format: 'der', type: 'pkcs8' });
+}
+
+/**
+ * The key pair for system-managed encryption, derived from a master key. It is never stored: anyone holding the
+ * master key can re-derive it, which is the point (no separate key to keep) and the trade-off (the server alone can
+ * read its backups).
+ */
+export function serverBackupKeyPair(masterKey: Buffer): { publicKey: string; secretKey: string } {
+  const raw = Buffer.from(hkdfSync('sha256', masterKey, Buffer.from('any-ssh-backup-system-key'), Buffer.from('v1'), 32));
+  const privateKey = createPrivateKey({ key: Buffer.concat([PKCS8_X25519_PREFIX, raw]), format: 'der', type: 'pkcs8' });
+  return { publicKey: PUBLIC_PREFIX + createPublicKey(privateKey).export({ format: 'jwk' }).x, secretKey: SECRET_PREFIX + raw.toString('base64url') };
 }
 
 const publicKeyObject = (raw: Buffer) => createPublicKey({ key: { kty: 'OKP', crv: 'X25519', x: raw.toString('base64url') }, format: 'jwk' });
@@ -125,21 +143,40 @@ export async function encryptFile(src: string, dest: string, publicKey: string):
   return { bytes, sha256: hash.digest('hex') };
 }
 
-/** Decrypts to `dest` (which must not exist). Removes `dest` and throws if the key is wrong or the file was changed. */
-export async function decryptFile(src: string, dest: string, secretKey: string): Promise<{ bytes: number; keyId: string }> {
-  const privateKey = secretKeyObject(secretKey);
-  const recipient = Buffer.from(createPublicKey(privateKey).export({ format: 'jwk' }).x!, 'base64url');
+/**
+ * Writes the database held in a backup to `dest` (which must not exist): decrypts an .anybak with whichever of
+ * `secretKeys` it was made for, or copies an unencrypted SQLite backup as is. Removes `dest` and throws if no key fits
+ * or the file was changed.
+ */
+export async function openBackupFile(src: string, dest: string, secretKeys: string[]): Promise<{ bytes: number; keyId: string | null }> {
   const input = await open(src, 'r');
   let output: FileHandle | undefined;
   try {
     const header = await readUpTo(input, HEADER_LENGTH);
+    if (header.subarray(0, SQLITE_MAGIC.length).equals(SQLITE_MAGIC)) {
+      output = await open(dest, 'wx', 0o600);
+      await output.write(header);
+      let bytes = header.length;
+      for (;;) {
+        const chunk = await readUpTo(input, CHUNK);
+        if (!chunk.length) break;
+        await output.write(chunk);
+        bytes += chunk.length;
+      }
+      await output.sync();
+      return { bytes, keyId: null };
+    }
     if (header.length < HEADER_LENGTH || !header.subarray(0, MAGIC.length).equals(MAGIC)) {
-      throw new BackupFormatError('This is not an Any-SSH encrypted backup.');
+      throw new BackupFormatError('This is not an Any-SSH backup.');
     }
     const fileKeyId = header.subarray(MAGIC.length, MAGIC.length + 8).toString('hex');
-    if (fileKeyId !== backupKeyId(PUBLIC_PREFIX + recipient.toString('base64url'))) {
-      throw new BackupFormatError(`This backup was encrypted for a different recovery key (${fileKeyId}). Use the secret key that goes with it.`);
+    const privateKey = secretKeys.map(secretKeyObject).find((k) => backupKeyId(PUBLIC_PREFIX + createPublicKey(k).export({ format: 'jwk' }).x) === fileKeyId);
+    if (!privateKey) {
+      throw new BackupFormatError(
+        `This backup was encrypted for key ${fileKeyId}. Give the recovery secret key it was made with, or, for a system-managed backup, run this where the master key it was made with is set.`,
+      );
     }
+    const recipient = Buffer.from(createPublicKey(privateKey).export({ format: 'jwk' }).x!, 'base64url');
     const ephemeral = header.subarray(MAGIC.length + 8);
     const key = deriveKey(diffieHellman({ privateKey, publicKey: publicKeyObject(ephemeral) }), ephemeral, recipient);
     output = await open(dest, 'wx', 0o600);
@@ -180,4 +217,14 @@ export async function decryptFile(src: string, dest: string, secretKey: string):
     await input.close();
     await output?.close();
   }
+}
+
+/** Decrypts an encrypted backup to `dest` with its recovery secret key. Refuses unencrypted files. */
+export async function decryptFile(src: string, dest: string, secretKey: string): Promise<{ bytes: number; keyId: string }> {
+  const r = await openBackupFile(src, dest, [secretKey]);
+  if (r.keyId === null) {
+    await rm(dest, { force: true });
+    throw new BackupFormatError('This backup is not encrypted.');
+  }
+  return { bytes: r.bytes, keyId: r.keyId };
 }
