@@ -20,6 +20,32 @@ const hostname = z
   );
 const sshUser = z.string().trim().min(1).max(64).regex(/^[a-zA-Z0-9._@\\-]+$/, 'Invalid SSH username');
 
+const tag = z
+  .string()
+  .trim()
+  .min(1)
+  .max(32)
+  .regex(/^[\p{L}\p{N}][\p{L}\p{N} ._:/-]*$/u, 'Tags may use letters, numbers, spaces and . _ : / -');
+const tags = z.array(tag).max(10, 'Use at most 10 tags');
+
+/** Drops repeats (ignoring case) and keeps the first spelling and the order given. */
+export function normaliseTags(list: string[]): string[] {
+  const seen = new Set<string>();
+  return list.filter((t) => {
+    const k = t.toLowerCase();
+    return seen.has(k) ? false : (seen.add(k), true);
+  });
+}
+
+function tagsOf(s: Pick<ServerRow, 'tags'>): string[] {
+  try {
+    const v = JSON.parse(s.tags) as unknown;
+    return Array.isArray(v) ? v.filter((t): t is string => typeof t === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 const serverFields = {
   name: z.string().trim().min(1).max(100),
   host: hostname,
@@ -29,6 +55,7 @@ const serverFields = {
   keyId: z.uuid().nullable().optional(),
   password: z.string().min(1).max(1024).optional(),
   notes: z.string().max(2000).default(''),
+  tags: tags.default([]),
   jumpMode: z.enum(['none', 'auto', 'fixed']).default('none'),
   jumpHostId: z.uuid().nullable().optional(),
 };
@@ -43,6 +70,7 @@ const updateBody = z
     keyId: z.uuid().nullable().optional(),
     password: z.string().min(1).max(1024).optional(),
     notes: z.string().max(2000).optional(),
+    tags: tags.optional(),
     jumpMode: z.enum(['none', 'auto', 'fixed']).optional(),
     jumpHostId: z.uuid().nullable().optional(),
   })
@@ -72,7 +100,7 @@ const connectBody = z
 const shareParams = z.object({ id: z.uuid(), userId: z.uuid() });
 
 /** Fields a "manage" grantee may change. Connection details and credentials stay with the owner. */
-const MANAGER_EDITABLE = new Set(['name', 'notes']);
+const MANAGER_EDITABLE = new Set(['name', 'notes', 'tags']);
 const JUMP_FIELDS = ['jumpMode', 'jumpHostId'] as const;
 
 export const serverPasswordContext = (serverId: string) => `server:${serverId}:password`;
@@ -141,6 +169,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       hostKey: hostKeyView(server),
       hostKeyChange: hostKeyChangeView(server),
       notes: server.notes,
+      tags: tagsOf(server),
       access,
       credentials,
       canShare,
@@ -236,17 +265,17 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     const id = randomUUID();
     const now = Date.now();
     db.prepare(
-      `INSERT INTO servers (id, owner_id, name, host, port, username, auth_method, key_id, password_enc, notes, jump_mode, jump_host_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO servers (id, owner_id, name, host, port, username, auth_method, key_id, password_enc, notes, tags, jump_mode, jump_host_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id, user.id, body.name, body.host, body.port, body.username, body.authMethod,
       body.authMethod === 'key' ? body.keyId : null,
       body.authMethod === 'password' && body.password ? box.seal(body.password, serverPasswordContext(id)) : null,
-      body.notes, jump.mode, jump.hostId, now, now,
+      body.notes, JSON.stringify(normaliseTags(body.tags)), jump.mode, jump.hostId, now, now,
     );
     audit.record({
       actorId: user.id, actorUsername: user.username, action: 'server.create', targetType: 'server', targetId: id,
-      ip: clientIp(req), details: { name: body.name, host: body.host, port: body.port, username: body.username, authMethod: body.authMethod, jumpMode: jump.mode, jumpHostId: jump.hostId },
+      ip: clientIp(req), details: { name: body.name, host: body.host, port: body.port, username: body.username, authMethod: body.authMethod, tags: normaliseTags(body.tags), jumpMode: jump.mode, jumpHostId: jump.hostId },
     });
     return { server: view(getServerAccess(ctx, user.id, id)!) };
   });
@@ -278,10 +307,10 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     db.transaction(() => {
       db.prepare(
         `UPDATE servers SET name = ?, host = ?, port = ?, username = ?, auth_method = ?, key_id = ?, password_enc = ?,
-           notes = ?, jump_mode = ?, jump_host_id = ?, updated_at = ? WHERE id = ?`,
+           notes = ?, tags = ?, jump_mode = ?, jump_host_id = ?, updated_at = ? WHERE id = ?`,
       ).run(
         body.name ?? server.name, host, port, body.username ?? server.username, authMethod, keyId, passwordEnc,
-        body.notes ?? server.notes, jump.mode, jump.hostId, Date.now(), id,
+        body.notes ?? server.notes, body.tags ? JSON.stringify(normaliseTags(body.tags)) : server.tags, jump.mode, jump.hostId, Date.now(), id,
       );
       if (endpointChanged) clearHostKey(id);
     })();
