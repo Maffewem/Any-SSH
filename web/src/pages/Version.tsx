@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { del, errorMessage, formatTime, get, post } from '../api';
-import { useAsync } from '../ui';
+import { useAsync, useConfirm, useToast } from '../ui';
 
 interface Published {
   version: string | null;
@@ -38,6 +38,8 @@ const short = (c: string | null) => (c ? c.slice(0, 7) : 'unknown');
 
 /** Admin-only: what is running, and whether a newer build has been published. Applying updates happens on the host. */
 export function VersionCard() {
+  const confirm = useConfirm();
+  const toast = useToast();
   const { data } = useAsync(() => get<VersionInfo>('/api/admin/version'), []);
   const history = useAsync(() => get<{ updates: HistoryEntry[] }>('/api/admin/version/history'), []);
   const [busy, setBusy] = useState(false);
@@ -105,8 +107,17 @@ export function VersionCard() {
           </p>
           <button
             disabled={busy}
-            onClick={() => {
-              if (confirm('Cancel the scheduled update? Connected users will no longer be warned.')) void run(() => del<VersionInfo>('/api/admin/version/update-now'));
+            onClick={async () => {
+              const ok = await confirm({
+                title: 'Cancel the scheduled update',
+                message: 'Connected users will no longer be warned.',
+                confirmLabel: 'Cancel update',
+                danger: true,
+              });
+              if (ok) {
+                await run(() => del<VersionInfo>('/api/admin/version/update-now'));
+                toast.success('Scheduled update cancelled.');
+              }
             }}
           >
             Cancel update
