@@ -55,6 +55,7 @@ const EVENT_LABELS: Record<string, string> = {
   'server.host_key_accept': 'New server fingerprint accepted',
   'server.host_key_dismiss': 'New server fingerprint dismissed',
   'server.host_key_forget': 'Server fingerprint removed',
+  'server.host_key_notify_owner': 'Asked the owner to review a changed fingerprint',
   'server.update': 'Server updated',
   'setup.create_admin': 'Administrator account created',
   'share.revoke': 'Sharing removed',
@@ -452,13 +453,14 @@ export function AuditPage() {
 
 export function HostKeysPage() {
   const { data, error } = useAsync(() => get<{ hosts: HostKeyRow[] }>('/api/admin/host-keys'), []);
+  const toast = useToast();
   return (
     <section>
       <div className="page-head">
         <h1>Host keys</h1>
       </div>
       <p className="muted small">
-        The fingerprint saved for each server. Only a server’s owner can accept a new fingerprint.
+        The fingerprint saved for each server. Admins can’t replace a fingerprint. When one has changed, use Notify owner to email the server’s owner, who can review it under Servers.
       </p>
       {error && <p className="error">{error}</p>}
       <div className="table-wrap card">
@@ -502,7 +504,23 @@ export function HostKeysPage() {
                 <td>{h.hostKey?.pinnedAt ? `${formatTime(h.hostKey.pinnedAt)}${h.hostKey.pinnedBy ? ` by ${h.hostKey.pinnedBy}` : ''}` : '—'}</td>
                 <td>
                   {h.hostKeyChange ? (
-                    <span className="badge warn">Fingerprint changed</span>
+                    <>
+                      <span className="badge warn">Fingerprint changed</span>
+                      <br />
+                      <button
+                        className="link"
+                        onClick={async () => {
+                          try {
+                            await post(`/api/admin/host-keys/${h.serverId}/notify-owner`);
+                            toast.success(`Asked @${h.owner.username} to review it.`);
+                          } catch (e) {
+                            toast.error(errorMessage(e));
+                          }
+                        }}
+                      >
+                        Notify owner
+                      </button>
+                    </>
                   ) : !h.hostKey ? (
                     <span className="badge">Not verified yet</span>
                   ) : h.conflict ? (

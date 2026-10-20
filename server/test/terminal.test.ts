@@ -45,6 +45,7 @@ function startFakeSshd(allowedPublicKeys: string[], hostKey: string): Promise<{ 
 
 let built: BuiltApp;
 let origin: string;
+let admin: Client;
 let owner: Client;
 let sharee: Client;
 let shareePassword: string;
@@ -60,7 +61,7 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${(built.app.server.address() as AddressInfo).port}`;
   built.ctx.config.allowedOrigins = [origin];
 
-  const admin = await setupAdmin(built);
+  admin = await setupAdmin(built);
   const o = await createUser(built, admin, 'owner');
   const s = await createUser(built, admin, 'sharee');
   owner = o.client;
@@ -216,6 +217,7 @@ describe('terminal over WebSocket', () => {
     expect(changed.expected).toBe('SHA256:not-the-real-one');
     expect(String(changed.presented)).toMatch(/^SHA256:/);
     expect(changed.isOwner).toBe(true);
+    expect(changed.serverId).toBe(serverId);
     const err = await t.next((m) => m.type === 'error');
     expect(err.code).toBe('host_key_mismatch');
     const actions = (built.ctx.db.prepare('SELECT action FROM audit_log').all() as { action: string }[]).map((r) => r.action);
@@ -229,6 +231,15 @@ describe('terminal over WebSocket', () => {
     await t2.next((m) => m.type === 'error');
     const sent = (built.ctx.mailer as unknown as { sent?: { subject: string }[] }).sent;
     if (sent) expect(sent.slice(mailBefore).filter((m) => /fingerprint .* has changed/.test(m.subject)).length).toBeLessThanOrEqual(1);
+
+    // An admin can ask the owner to review it, but cannot accept it. Others cannot ask.
+    expect([403, 404]).toContain((await admin.post(`/api/servers/${serverId}/host-key/accept`, { fingerprint: changed.presented, password: 'x' })).status);
+    expect((await sharee.post(`/api/admin/host-keys/${serverId}/notify-owner`)).status).toBe(403);
+    expect((await admin.post(`/api/admin/host-keys/${serverId}/notify-owner`)).status).toBe(400); // no email on file
+    built.ctx.db.prepare("UPDATE users SET email = 'owner@example.test' WHERE username = 'owner'").run();
+    expect((await admin.post(`/api/admin/host-keys/${serverId}/notify-owner`)).status).toBe(200);
+    const audited = (built.ctx.db.prepare('SELECT action FROM audit_log').all() as { action: string }[]).map((r) => r.action);
+    expect(audited).toContain('server.host_key_notify_owner');
 
     // Accepting needs the exact fingerprint and the owner's password.
     expect((await owner.post(`/api/servers/${serverId}/host-key/accept`, { fingerprint: 'SHA256:other', password: 'x' })).status).toBe(409);

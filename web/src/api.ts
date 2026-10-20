@@ -363,3 +363,28 @@ export interface Health {
     probe: HealthProbe | null;
   }[];
 }
+
+const REVIEW_KEY = 'anyssh.reviewHostKey';
+export const REVIEW_HOST_KEY_EVENT = 'anyssh:review-host-key';
+
+/** Takes the user to Servers with the changed-key review for this server open. */
+export function reviewHostKey(serverId: string) {
+  try {
+    sessionStorage.setItem(REVIEW_KEY, serverId);
+  } catch {
+    /* storage unavailable: they land on Servers and use the card */
+  }
+  if (location.hash === '#/servers') window.dispatchEvent(new Event(REVIEW_HOST_KEY_EVENT));
+  else location.hash = '#/servers';
+}
+
+/** The server a pending review was requested for, once. */
+export function takeHostKeyReview(): string | null {
+  try {
+    const id = sessionStorage.getItem(REVIEW_KEY);
+    sessionStorage.removeItem(REVIEW_KEY);
+    return id;
+  } catch {
+    return null;
+  }
+}

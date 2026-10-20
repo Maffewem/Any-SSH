@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 import { z } from 'zod';
 import { notify } from '../accountTokens.js';
 import { HttpError, badRequest, clientIp, forbidden, idParam, notFound, parse, requireAdmin, requireUser } from '../http.js';
+import { emails } from '../mail.js';
 import { verifyPassword } from '../passwords.js';
 import type { ConnectCredential } from '../ssh/registry.js';
 import type { AppContext, ServerAccess, ServerRow, ServerShareRow, ShareCredentials, SharePermission, SshKeyRow, UserRow } from '../types.js';
@@ -435,6 +436,31 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
         conflict: (pinsByEndpoint.get(`${r.host.toLowerCase()}:${r.port}`)?.size ?? 0) > 1,
       })),
     };
+  });
+
+  // An admin cannot replace a pinned key, but can ask the owner to review a pending change.
+  app.post('/api/admin/host-keys/:id/notify-owner', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
+    const { user: admin } = requireAdmin(req);
+    const { id } = parse(idParam, req.params);
+    const row = db
+      .prepare('SELECT s.*, u.email AS owner_email, u.display_name AS owner_display_name FROM servers s JOIN users u ON u.id = s.owner_id WHERE s.id = ?')
+      .get(id) as (ServerRow & { owner_email: string | null; owner_display_name: string }) | undefined;
+    if (!row) throw notFound('Server not found.');
+    if (!row.host_key_pending || !row.host_key_fingerprint) throw badRequest('This server has no changed fingerprint waiting for review.');
+    if (!row.owner_email) throw badRequest('The owner has no email address on file.');
+    await ctx.mailer
+      .send(
+        emails.hostKeyReviewRequested({
+          to: row.owner_email, displayName: row.owner_display_name, server: row.name, endpoint: `${row.host}:${row.port}`,
+          requestedBy: admin.username, saved: row.host_key_fingerprint, presented: row.host_key_pending,
+        }),
+      )
+      .catch(() => {});
+    audit.record({
+      actorId: admin.id, actorUsername: admin.username, action: 'server.host_key_notify_owner', targetType: 'server', targetId: id,
+      ip: clientIp(req), details: { host: row.host, port: row.port, pending: row.host_key_pending },
+    });
+    return { ok: true };
   });
 
   // ---- Sharing ----

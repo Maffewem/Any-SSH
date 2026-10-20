@@ -369,6 +369,7 @@ class LiveSession implements LiveTerminal {
         });
         this.send({
           type: 'hostkey_changed',
+          serverId: server.id,
           host: server.host,
           port: server.port,
           expected: pinned,
