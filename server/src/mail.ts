@@ -189,6 +189,21 @@ export const emails = {
         footer,
     };
   },
+  hostKeyReviewRequested(p: {
+    to: string; displayName: string; server: string; endpoint: string; requestedBy: string; saved: string; presented: string;
+  }): MailMessage {
+    return {
+      to: p.to,
+      subject: `Any-SSH: please review the changed fingerprint for ${p.server}`,
+      text:
+        `Hi ${p.displayName},\n\n${p.requestedBy}, an administrator, asked you to review a changed fingerprint on "${p.server}" (${p.endpoint}). ` +
+        'Connections to it are blocked until you decide.\n\n' +
+        `Saved fingerprint:     ${p.saved}\nPresented fingerprint: ${p.presented}\n\n` +
+        'Open Servers, select Edit on the server and choose Review changed key. If you reinstalled the server or changed its keys, ' +
+        'check the new fingerprint on the server itself and replace the saved one. If you didn’t, don’t accept it.' +
+        footer,
+    };
+  },
   securityNotice(p: { to: string; displayName: string; what: string }): MailMessage {
     return {
       to: p.to,

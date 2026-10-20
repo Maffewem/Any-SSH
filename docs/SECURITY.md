@@ -164,13 +164,19 @@ and reset links directly so they can pass them on.
    - *A changed key is always refused.* The user sees a blocking dialog with the pinned and presented fingerprints side by
      side, the owner is emailed (once per distinct new key, not per retry), and the attempt is audited as
      `ssh.host_key_mismatch` with both fingerprints. The new key is parked on the server record as a pending change.
+   - *The way forward is in the blocking dialog.* For the owner it has a **Review changed key** button that opens the server
+     on Servers. The server card also shows **Review changed key** while a change is pending. There the owner compares the
+     saved and presented fingerprints and chooses **Replace saved fingerprint**, **Dismiss** (keep the saved one) or
+     **Forget saved fingerprint**. Managers and people with `use` access are told to ask the owner.
    - *Accepting it is owner-only* (not managers, not admins), needs the owner's **account password**, and must name the exact
      fingerprint that was shown, so a key that appears later cannot ride on an earlier review. Audited as
      `server.host_key_accept` and the owner is emailed again. The owner can instead dismiss the change (`server.host_key_dismiss`),
      or forget the pin to verify afresh (`server.host_key_forget`, owner-only).
    - Changing a server's host or port clears the pin and any pending change.
    - Admins get a read-only **Host keys** page listing every pinned fingerprint, who trusted it, any pending change, and
-     servers pinned to different keys for the same host and port. It exposes no credentials and grants no access.
+     servers pinned to different keys for the same host and port. It exposes no credentials and grants no access. For a pending
+     change an admin can choose **Notify owner**, which emails the owner a request to review it (`server.host_key_notify_owner`,
+     audited, rate limited). Admins still cannot replace the fingerprint.
    The ticket also carries which credentials the connection uses (saved, one of the user's own keys, a one-off key, or a
    password prompt) and the SSH login name.
 4. **SSRF guard.** The hostname is resolved once and the vetted IP is what we dial (no DNS rebinding window). Loopback,

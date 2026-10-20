@@ -3,12 +3,12 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, notifyLocked, post, type ConnectChoice, type Server } from '../api';
+import { ApiError, notifyLocked, post, reviewHostKey, type ConnectChoice, type Server } from '../api';
 import { Field, Form, Modal } from '../ui';
 
 type Prompt =
   | { kind: 'hostkey'; fingerprint: string; keyType: string; host: string; port: number }
-  | { kind: 'hostkey_changed'; host: string; port: number; expected: string; expectedType: string | null; presented: string; presentedType: string; isOwner: boolean }
+  | { kind: 'hostkey_changed'; serverId: string; host: string; port: number; expected: string; expectedType: string | null; presented: string; presentedType: string; isOwner: boolean }
   | { kind: 'password'; username: string; host: string };
 
 export type TerminalState = 'connecting' | 'connected' | 'reconnecting' | 'closed';
@@ -189,7 +189,7 @@ export function TerminalSession(props: {
             break;
           case 'hostkey_changed':
             setPrompt({
-              kind: 'hostkey_changed', host: m.host, port: m.port, expected: m.expected, expectedType: m.expectedType,
+              kind: 'hostkey_changed', serverId: m.serverId, host: m.host, port: m.port, expected: m.expected, expectedType: m.expectedType,
               presented: m.presented, presentedType: m.presentedType, isOwner: m.isOwner,
             });
             break;
@@ -323,11 +323,16 @@ export function TerminalSession(props: {
           </p>
           <p className="muted small">
             {prompt.isOwner
-              ? 'If you didn’t change this server’s keys, don’t accept the new fingerprint. To accept it, go to Servers, select Edit on this server, and review the change. Your password is required. The owner has been emailed.'
+              ? 'If you didn’t change this server’s keys, don’t replace the saved fingerprint. If you did, select Review changed key to compare the fingerprints and replace it. Your password is required.'
               : 'Only the server’s owner can accept a new fingerprint. They’ve been emailed. Let them know, and don’t try to connect another way.'}
           </p>
           <div className="row">
-            <button className="primary" onClick={() => setPrompt(null)}>
+            {prompt.isOwner && (
+              <button className="primary" onClick={() => (reviewHostKey(prompt.serverId), setPrompt(null))}>
+                Review changed key
+              </button>
+            )}
+            <button className={prompt.isOwner ? '' : 'primary'} onClick={() => setPrompt(null)}>
               Close
             </button>
           </div>

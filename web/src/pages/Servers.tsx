@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { del, formatTime, get, patch, post, put, type AuthMethod, type ConnectChoice, type ConnectCredential, type JumpHost, type JumpMode, type Server, type Share, type ShareCredentials, type SshKey } from '../api';
+import { useEffect, useState } from 'react';
+import { del, formatTime, get, patch, post, put, REVIEW_HOST_KEY_EVENT, reviewHostKey, takeHostKeyReview, type AuthMethod, type ConnectChoice, type ConnectCredential, type JumpHost, type JumpMode, type Server, type Share, type ShareCredentials, type SshKey } from '../api';
 import { Field, Form, Modal, useAsync, useConfirm, useToast } from '../ui';
 
 export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, choice?: ConnectChoice) => void; isAdmin: boolean }) {
@@ -8,6 +8,19 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
   const [sharing, setSharing] = useState<Server | null>(null);
   const [connecting, setConnecting] = useState<Server | null>(null);
   const [filter, setFilter] = useState('');
+  const [reviewId, setReviewId] = useState<string | null>(takeHostKeyReview);
+  useEffect(() => {
+    const onReview = () => setReviewId(takeHostKeyReview());
+    window.addEventListener(REVIEW_HOST_KEY_EVENT, onReview);
+    return () => window.removeEventListener(REVIEW_HOST_KEY_EVENT, onReview);
+  }, []);
+  // Opens the review requested from a blocked connection once the list has loaded.
+  useEffect(() => {
+    if (!reviewId || !data) return;
+    const target = data.servers.find((x) => x.id === reviewId);
+    if (target && target.access !== 'use') setEditing(target);
+    setReviewId(null);
+  }, [reviewId, data]);
 
   const [activeTag, setActiveTag] = useState<string | null>(null);
 
@@ -121,7 +134,7 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
                 )}
                 <span className="badge">{s.credentials === 'own' ? 'Your own credentials' : authLabel(s.authMethod)}</span>
                 {s.hostKeyChange ? (
-                  <span className="badge warn">Server fingerprint changed</span>
+                  <span className="badge warn">Server fingerprint changed{s.access === 'use' ? ' · ask the owner to review it' : ''}</span>
                 ) : (
                   !s.hostKeyFingerprint && <span className="badge warn">Server fingerprint not verified</span>
                 )}
@@ -146,6 +159,11 @@ export function ServersPage({ onConnect, isAdmin }: { onConnect: (s: Server, cho
               <button className="connect-as" title="Connect with different credentials" aria-label="Connect with different credentials" onClick={() => setConnecting(s)}>
                 Connect as…
               </button>
+              {s.hostKeyChange && s.access !== 'use' && (
+                <button className="danger-outline" onClick={() => setEditing(s)}>
+                  Review changed key
+                </button>
+              )}
               {s.access !== 'use' && <button onClick={() => setEditing(s)}>Edit</button>}
               {(s.access === 'owner' || s.canShare) && <button onClick={() => setSharing(s)}>Share</button>}
             </div>
@@ -581,7 +599,7 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
             reviewing ? (
               <>
                 <p className="muted small">
-                  Only accept it if you reinstalled this server or changed its keys, and you’ve checked this fingerprint on the server itself (<code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code>).
+                  Replace the saved fingerprint only if you reinstalled this server or changed its keys, and you’ve checked the new fingerprint on the server itself (<code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code>). Confirm with your password. Replacing it applies to everyone this server is shared with.
                 </p>
                 <Field label="Your password">
                   <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
@@ -590,9 +608,9 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
                   <button
                     className="danger"
                     disabled={!password}
-                    onClick={() => run(() => post(`/api/servers/${server.id}/host-key/accept`, { fingerprint: change.fingerprint, password }), 'New fingerprint accepted.')}
+                    onClick={() => run(() => post(`/api/servers/${server.id}/host-key/accept`, { fingerprint: change.fingerprint, password }), 'Saved fingerprint replaced.')}
                   >
-                    Accept new fingerprint
+                    Replace saved fingerprint
                   </button>
                   <button onClick={() => setReviewing(false)}>Back</button>
                 </div>
@@ -600,13 +618,26 @@ function HostKeyPanel({ server, isOwner, onChanged }: { server: Server; isOwner:
             ) : (
               <div className="row">
                 <button className="danger-outline" onClick={() => setReviewing(true)}>
-                  Review and accept
+                  Review changed key
                 </button>
                 <button onClick={() => run(() => post(`/api/servers/${server.id}/host-key/dismiss`), 'Warning dismissed. The saved fingerprint is unchanged.')}>Dismiss and keep the saved fingerprint</button>
+                <button
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: `Forget the saved fingerprint for ${server.name}?`,
+                      message: 'The changed key is cleared and you’ll be asked to verify whatever fingerprint the server presents next time you connect. Only do this if you trust the network you’re on.',
+                      confirmLabel: 'Forget fingerprint',
+                      danger: true,
+                    });
+                    if (ok) await run(() => post(`/api/servers/${server.id}/forget-host-key`), 'Saved fingerprint removed.');
+                  }}
+                >
+                  Forget saved fingerprint
+                </button>
               </div>
             )
           ) : (
-            <p className="muted small">Only the owner can accept a new fingerprint.</p>
+            <p className="muted small">Only the server’s owner can replace the saved fingerprint. Ask them to open Servers and select Review changed key.</p>
           )}
         </div>
       )}
