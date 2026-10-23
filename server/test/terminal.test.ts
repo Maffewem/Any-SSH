@@ -266,3 +266,17 @@ describe('terminal over WebSocket', () => {
     expect(msg.code).toBe('unauthorized');
   });
 });
+
+describe('malformed terminal requests', () => {
+  it('refuses a bad query without crashing the server', async () => {
+    for (const query of ['cols=abc', 'rows=0', 'cols=99999', `ticket=${'x'.repeat(200)}`, 'cols[]=1&cols[]=2']) {
+      const ws = new WebSocket(`${origin.replace('http', 'ws')}/api/terminal?${query}`, { headers: { origin } });
+      const closed = await new Promise<number>((resolve) => {
+        ws.on('close', (code) => resolve(code));
+        ws.on('error', () => undefined);
+      });
+      expect(closed).not.toBe(1006);
+    }
+    expect((await fetch(`${origin}/api/health`)).status).toBe(200);
+  });
+});

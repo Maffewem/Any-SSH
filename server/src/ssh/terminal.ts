@@ -33,7 +33,11 @@ const REPLAY_LIMIT = 512 * 1024;
 
 export function registerTerminalRoute(app: FastifyInstance, ctx: AppContext): void {
   app.get('/api/terminal', { websocket: true }, (socket: WebSocket, req: FastifyRequest) => {
-    void runTerminal(ctx, socket, req);
+    // A rejected promise here would be unhandled and take the whole process down.
+    runTerminal(ctx, socket, req).catch((err: unknown) => {
+      req.log.error({ err }, 'Terminal connection failed');
+      socket.close(1011, 'internal');
+    });
   });
 }
 
@@ -46,13 +50,15 @@ async function runTerminal(ctx: AppContext, ws: WebSocket, req: FastifyRequest):
 
   // 1. Who is this? Browser origin, logged-in session and a fresh single-use ticket must all agree.
   const auth = req.auth;
-  const { ticket: token, cols, rows } = z
+  const query = z
     .object({
       ticket: z.string().max(100).default(''),
       cols: z.coerce.number().int().min(1).max(1000).default(80),
       rows: z.coerce.number().int().min(1).max(500).default(24),
     })
-    .parse(req.query);
+    .safeParse(req.query);
+  if (!query.success) return fail('bad_request', 'The request was not valid.');
+  const { ticket: token, cols, rows } = query.data;
   // Redeem first so a ticket is burned by any attempt, including a rejected one.
   const ticket = terminals.redeemTicket(token);
   const origin = req.headers.origin;
